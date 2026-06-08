@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+npm-debug.log*
+
+# Config local do Claude Code (não faz parte do app)
+.claude/
