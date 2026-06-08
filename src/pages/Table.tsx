@@ -5,7 +5,7 @@ import { useRoom } from '@/store/roomStore'
 import { getIdentity } from '@/lib/identity'
 import { Seat, teamOf, GameState } from '@/engine/state'
 import { isCanastra, isCanastraLimpa } from '@/engine/sequence'
-import { Card } from '@/lib/types'
+import { Card, isWild } from '@/lib/types'
 import PlayingCard from '@/components/PlayingCard'
 import Button from '@/components/ui/Button'
 import EmoteBar from '@/components/social/EmoteBar'
@@ -13,6 +13,23 @@ import SocialLayer from '@/components/social/SocialLayer'
 
 const initials = (name: string) =>
   name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+
+const SUIT_SORT: Record<string, number> = { copas: 0, espadas: 1, ouros: 2, paus: 3 }
+const RANK_SORT: Record<string, number> = {
+  A: 14, K: 13, Q: 12, J: 11, '10': 10, '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2,
+}
+/** Ordena por naipe e valor (coringas ao fim) — pro botão "organizar". */
+function sortedHandIds(cards: Card[]): string[] {
+  return [...cards]
+    .sort((a, b) => {
+      const wa = isWild(a)
+      const wb = isWild(b)
+      if (wa !== wb) return wa ? 1 : -1
+      if (a.suit !== b.suit) return (SUIT_SORT[a.suit] ?? 9) - (SUIT_SORT[b.suit] ?? 9)
+      return (RANK_SORT[a.rank] ?? 0) - (RANK_SORT[b.rank] ?? 0)
+    })
+    .map((c) => c.id)
+}
 
 export default function Table() {
   const navigate = useNavigate()
@@ -50,6 +67,19 @@ export default function Table() {
   // limpa seleção ao trocar de quem joga
   useEffect(() => setSelected(new Set()), [state?.turn, viewSeat])
 
+  // ordem de exibição da mão (local, por aparelho) — preserva organização e anexa cartas novas
+  const [order, setOrder] = useState<string[]>([])
+  useEffect(() => {
+    if (viewSeat == null || !state) return
+    const ids = state.hands[viewSeat].map((c) => c.id)
+    setOrder((prev) => {
+      const keep = prev.filter((id) => ids.includes(id))
+      const added = ids.filter((id) => !keep.includes(id))
+      const next = [...keep, ...added]
+      return next.length === prev.length && next.every((x, i) => x === prev[i]) ? prev : next
+    })
+  }, [state, viewSeat])
+
   if (!state) {
     return (
       <div className="grid min-h-full place-items-center px-6 text-center">
@@ -84,6 +114,12 @@ export default function Table() {
   const ids = [...selected]
   const myTeam = teamOf(bottom)
   const topDiscard = state.discard[state.discard.length - 1]
+
+  const viewHand = viewSeat != null ? state.hands[viewSeat] : []
+  const byId = new Map(viewHand.map((c) => [c.id, c]))
+  const orderedHand = order.map((id) => byId.get(id)).filter(Boolean) as Card[]
+  const hand = orderedHand.length === viewHand.length ? orderedHand : viewHand
+  const organize = () => viewSeat != null && setOrder(sortedHandIds(state.hands[viewSeat]))
 
   const doMeld = () => {
     act({ type: 'meld', cardIds: ids })
@@ -185,12 +221,20 @@ export default function Table() {
               {local ? `Mão de ${state.players[viewSeat]?.name ?? viewSeat}` : 'Sua mão'} ·{' '}
               {state.hands[viewSeat].length}
             </span>
-            <span className="text-[10px] text-brass-300">
-              {selected.size > 0 ? `${selected.size} selecionada(s)` : ''}
-            </span>
+            <div className="flex items-center gap-3">
+              {selected.size > 0 && (
+                <span className="text-[10px] text-brass-300">{selected.size} selecionada(s)</span>
+              )}
+              <button
+                onClick={organize}
+                className="rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[10px] uppercase tracking-wider text-brass-300 transition-colors hover:bg-white/10"
+              >
+                ⇄ organizar
+              </button>
+            </div>
           </div>
           <div className="flex flex-wrap justify-center gap-y-2 pt-2">
-            {state.hands[viewSeat].map((c, i) => (
+            {hand.map((c, i) => (
               <div key={c.id} style={{ marginLeft: i ? -14 : 0 }}>
                 <PlayingCard
                   card={c}
