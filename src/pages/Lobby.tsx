@@ -5,6 +5,8 @@ import EmoteBar from '@/components/social/EmoteBar'
 import SocialLayer from '@/components/social/SocialLayer'
 import { getIdentity, setName as persistName } from '@/lib/identity'
 import { useRoom, teamOfSeat, RoomPlayer } from '@/store/roomStore'
+import { useMatch } from '@/store/matchStore'
+import { Seat, SeatPlayer } from '@/engine/state'
 
 const SEATS = [0, 1, 2, 3]
 const TEAM_LABEL = { nos: 'Nós', eles: 'Eles' } as const
@@ -23,7 +25,8 @@ export default function Lobby() {
   const disconnect = useRoom((s) => s.disconnect)
   const setOnStart = useRoom((s) => s.setOnStart)
   const chooseSeat = useRoom((s) => s.chooseSeat)
-  const start = useRoom((s) => s.start)
+  const broadcastStart = useRoom((s) => s.start)
+  const hostMatch = useMatch((s) => s.host)
 
   // conecta à sala assim que houver nome
   useEffect(() => {
@@ -54,6 +57,16 @@ export default function Lobby() {
   const leave = () => {
     disconnect()
     navigate('/')
+  }
+
+  const startGame = async () => {
+    const players: Record<Seat, SeatPlayer | null> = { 0: null, 1: null, 2: null, 3: null }
+    for (const seat of [0, 1, 2, 3] as Seat[]) {
+      const p = bySeat[seat]
+      if (p) players[seat] = { id: p.id, name: p.name }
+    }
+    await hostMatch(code, players, me.id) // distribui e grava no Supabase
+    broadcastStart() // avisa todos pra irem pra mesa
   }
 
   // Sem nome ainda → pede antes de entrar na sala
@@ -192,7 +205,7 @@ export default function Lobby() {
         variant="gold"
         className="mt-4 w-full"
         disabled={!allSeated || mySeat == null}
-        onClick={start}
+        onClick={startGame}
       >
         {allSeated ? 'Iniciar jogo' : `Aguardando jogadores (${Object.keys(bySeat).length}/4)`}
       </Button>

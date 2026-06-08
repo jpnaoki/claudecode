@@ -64,6 +64,11 @@ export const useRoom = create<RoomStore>((set, get) => ({
       return
     }
     if (s.channel) supabase?.removeChannel(s.channel)
+    try {
+      localStorage.setItem('tranca.room', code)
+    } catch {
+      /* ignore */
+    }
 
     if (!supabase) {
       set({ status: 'no-backend', code, me })
@@ -118,6 +123,11 @@ export const useRoom = create<RoomStore>((set, get) => ({
   disconnect: () => {
     const { channel } = get()
     if (channel) supabase?.removeChannel(channel)
+    try {
+      localStorage.removeItem('tranca.room')
+    } catch {
+      /* ignore */
+    }
     set({ channel: null, code: null, status: 'idle', players: [], reactions: [], mySeat: null })
   },
 

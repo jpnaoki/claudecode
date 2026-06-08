@@ -13,7 +13,13 @@ export interface Meld {
   cards: Card[] // sequência ordenada do mesmo naipe
 }
 
+export interface SeatPlayer {
+  id: string
+  name: string
+}
+
 export interface GameState {
+  players: Record<Seat, SeatPlayer | null> // quem está em cada assento
   handNumber: number
   stock: Card[]
   discard: Card[]
@@ -43,6 +49,7 @@ export function dealHand(opts: {
   scores: Record<Team, number>
   target: number
   seed?: string
+  players?: Record<Seat, SeatPlayer | null>
 }): GameState {
   const deck = shuffle(buildDeck(), seededRng(opts.seed))
   const d = [...deck]
@@ -66,6 +73,7 @@ export function dealHand(opts: {
 
   const firstToPlay = ((opts.dealer + 1) % 4) as Seat
   return {
+    players: opts.players ?? { 0: null, 1: null, 2: null, 3: null },
     handNumber: opts.handNumber,
     stock: d,
     discard: [],

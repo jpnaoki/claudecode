@@ -47,6 +47,7 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
         dealer: ((state.dealer + 1) % 4) as Seat,
         scores: state.scores,
         target: state.target,
+        players: state.players,
       }),
     )
   }

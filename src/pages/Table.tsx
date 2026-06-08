@@ -1,13 +1,310 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { useGame } from '@/store/gameStore'
+import { useMatch } from '@/store/matchStore'
 import { useRoom } from '@/store/roomStore'
+import { getIdentity } from '@/lib/identity'
+import { Seat, teamOf, GameState } from '@/engine/state'
+import { isCanastra, isCanastraLimpa } from '@/engine/sequence'
+import { Card } from '@/lib/types'
 import PlayingCard from '@/components/PlayingCard'
 import Button from '@/components/ui/Button'
-import Seat from '@/components/table/Seat'
-import MeldArea from '@/components/table/MeldArea'
 import EmoteBar from '@/components/social/EmoteBar'
 import SocialLayer from '@/components/social/SocialLayer'
+
+const initials = (name: string) =>
+  name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+
+export default function Table() {
+  const navigate = useNavigate()
+  const state = useMatch((s) => s.state)
+  const mySeat = useMatch((s) => s.mySeat)
+  const local = useMatch((s) => s.local)
+  const error = useMatch((s) => s.error)
+  const act = useMatch((s) => s.act)
+  const leaveMatch = useMatch((s) => s.leave)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  // Decide online x local + reconexão (volta pela sala salva)
+  useEffect(() => {
+    const room = useRoom.getState()
+    const me = getIdentity()
+    let code = room.code
+    if (!code) {
+      const saved = localStorage.getItem('tranca.room')
+      if (saved && me.name) {
+        code = saved
+        room.connect(saved, me)
+      }
+    }
+    const m = useMatch.getState()
+    if (code && me.name) {
+      if (m.code !== code || !m.state) m.join(code, me.id)
+    } else if (!m.state) {
+      m.startLocal()
+    }
+  }, [])
+
+  const viewSeat: Seat | null = local && state ? state.turn : mySeat
+  const isMyTurn = !!state && (local || (mySeat != null && state.turn === mySeat))
+
+  // limpa seleção ao trocar de quem joga
+  useEffect(() => setSelected(new Set()), [state?.turn, viewSeat])
+
+  if (!state) {
+    return (
+      <div className="grid min-h-full place-items-center px-6 text-center">
+        <div>
+          <div className="animate-pulse font-display text-2xl text-gold">Preparando a mesa…</div>
+          <p className="mt-2 text-sm text-bone-200/60">conectando à partida</p>
+        </div>
+      </div>
+    )
+  }
+
+  const leave = () => {
+    leaveMatch()
+    useRoom.getState().disconnect()
+    localStorage.removeItem('tranca.room')
+    navigate('/')
+  }
+
+  const rel = (off: number) => (((viewSeat ?? 0) + off) % 4) as Seat
+  const bottom = viewSeat ?? 0
+  const left = rel(1)
+  const top = rel(2)
+  const right = rel(3)
+
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s)
+      n.has(id) ? n.delete(id) : n.add(id)
+      return n
+    })
+
+  const ids = [...selected]
+  const myTeam = teamOf(bottom)
+  const topDiscard = state.discard[state.discard.length - 1]
+
+  const doMeld = () => {
+    act({ type: 'meld', cardIds: ids })
+    setSelected(new Set())
+  }
+  const doDiscard = () => {
+    if (ids.length !== 1) return
+    act({ type: 'discard', cardId: ids[0] })
+    setSelected(new Set())
+  }
+  const addTo = (meldId: string) => {
+    if (ids.length === 0) return
+    act({ type: 'addToMeld', meldId, cardIds: ids })
+    setSelected(new Set())
+  }
+
+  return (
+    <div className="mx-auto flex min-h-full max-w-md flex-col px-3 pb-3">
+      <SocialLayer />
+
+      {/* topo */}
+      <header className="flex items-center justify-between py-2">
+        <button onClick={leave} className="text-xs uppercase tracking-widest text-brass-400/70">
+          ← sair
+        </button>
+        <div className="panel flex items-center gap-4 rounded-full px-4 py-1.5">
+          <ScoreBadge label="Nós" value={state.scores.nos} accent active={myTeam === 'nos'} />
+          <div className="h-5 w-px bg-white/10" />
+          <ScoreBadge label="Eles" value={state.scores.eles} active={myTeam === 'eles'} />
+        </div>
+        <span className="text-[10px] uppercase tracking-widest text-bone-200/40">
+          mão {state.handNumber}
+        </span>
+      </header>
+
+      <TurnBanner state={state} isMyTurn={isMyTurn} local={local} />
+
+      {/* parceiro (topo) */}
+      <div className="flex justify-center py-1">
+        <SeatChip state={state} seat={top} />
+      </div>
+
+      {/* meio: oponentes + centro */}
+      <div className="my-2 grid grid-cols-[auto_1fr_auto] items-center gap-1">
+        <SeatChip state={state} seat={left} vertical />
+
+        <div
+          className="flex items-center justify-center gap-3 rounded-[1.4rem] border border-brass-500/25 py-4"
+          style={{
+            background: 'radial-gradient(120% 140% at 50% 0%, rgba(20,120,78,.45), rgba(0,0,0,.28))',
+            boxShadow: 'inset 0 2px 10px rgba(0,0,0,.45)',
+          }}
+        >
+          <Pile label={`monte ${state.stock.length}`}>
+            <PlayingCard faceDown size="md" />
+          </Pile>
+          <Pile label={state.discardLocked ? '🔒 lixo' : `lixo ${state.discard.length}`}>
+            {topDiscard ? (
+              <PlayingCard card={topDiscard} size="md" />
+            ) : (
+              <div className="grid h-24 w-16 place-items-center rounded-xl border border-dashed border-white/15 text-[10px] text-bone-200/30">
+                vazio
+              </div>
+            )}
+          </Pile>
+          <Pile label={`mortos ${state.mortos.length}`}>
+            <div className="relative">
+              <PlayingCard faceDown size="md" className="!w-12" />
+              {state.mortos.length > 1 && (
+                <div className="absolute -right-2 -top-1">
+                  <PlayingCard faceDown size="md" className="!w-12" />
+                </div>
+              )}
+            </div>
+          </Pile>
+        </div>
+
+        <SeatChip state={state} seat={right} vertical />
+      </div>
+
+      {/* jogos das duplas */}
+      <div className="space-y-2">
+        <TeamMelds
+          state={state}
+          team={myTeam}
+          label="Nossos jogos"
+          onMeldClick={ids.length ? addTo : undefined}
+        />
+        <TeamMelds state={state} team={myTeam === 'nos' ? 'eles' : 'nos'} label="Jogos deles" />
+      </div>
+
+      <div className="flex-1" />
+
+      {/* minha mão */}
+      {viewSeat != null && (
+        <div className="mt-2">
+          <div className="mb-1 flex items-center justify-between px-1">
+            <span className="text-[10px] uppercase tracking-widest text-bone-200/50">
+              {local ? `Mão de ${state.players[viewSeat]?.name ?? viewSeat}` : 'Sua mão'} ·{' '}
+              {state.hands[viewSeat].length}
+            </span>
+            <span className="text-[10px] text-brass-300">
+              {selected.size > 0 ? `${selected.size} selecionada(s)` : ''}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-center gap-y-2 pt-2">
+            {state.hands[viewSeat].map((c, i) => (
+              <div key={c.id} style={{ marginLeft: i ? -14 : 0 }}>
+                <PlayingCard
+                  card={c}
+                  size="md"
+                  selected={selected.has(c.id)}
+                  onClick={() => toggle(c.id)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ações */}
+      <div className="mt-2 flex gap-2">
+        {state.phase === 'draw' ? (
+          <>
+            <Button variant="gold" className="flex-1 !px-2" disabled={!isMyTurn || state.hasDrawn} onClick={() => act({ type: 'draw' })}>
+              Comprar
+            </Button>
+            <Button
+              variant="primary"
+              className="flex-1 !px-2"
+              disabled={!isMyTurn || state.hasDrawn || state.discard.length === 0 || state.discardLocked}
+              onClick={() => act({ type: 'takeDiscard' })}
+            >
+              Pegar lixo
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="ghost" className="flex-1 !px-2" disabled={!isMyTurn || selected.size < 3} onClick={doMeld}>
+              Baixar
+            </Button>
+            <Button variant="gold" className="flex-1 !px-2" disabled={!isMyTurn || selected.size !== 1} onClick={doDiscard}>
+              Descartar
+            </Button>
+          </>
+        )}
+      </div>
+
+      {/* reações */}
+      <div className="mt-2 flex justify-center">
+        <EmoteBar compact />
+      </div>
+
+      {/* toast de erro */}
+      {error && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-28 z-50 flex justify-center px-4">
+          <div className="rounded-xl border border-ember-500/40 bg-ember-600/90 px-4 py-2 text-sm font-semibold text-white shadow-card-lift">
+            {error}
+          </div>
+        </div>
+      )}
+
+      {/* fim de mão / fim de jogo */}
+      {(state.phase === 'handOver' || state.phase === 'matchOver') && (
+        <EndOverlay state={state} canAdvance={local || mySeat === 0} onNext={() => act({ type: 'nextHand' })} onLeave={leave} />
+      )}
+    </div>
+  )
+}
+
+function ScoreBadge({ label, value, accent, active }: { label: string; value: number; accent?: boolean; active?: boolean }) {
+  return (
+    <div className={`text-center ${active ? '' : 'opacity-70'}`}>
+      <div className={`text-[9px] uppercase tracking-widest ${accent ? 'text-brass-300' : 'text-ember-400'}`}>{label}</div>
+      <div className="font-display text-lg leading-none">{value}</div>
+    </div>
+  )
+}
+
+function TurnBanner({ state, isMyTurn, local }: { state: GameState; isMyTurn: boolean; local: boolean }) {
+  const name = state.players[state.turn]?.name ?? `Assento ${state.turn}`
+  const phaseTxt = state.phase === 'draw' ? 'comprar' : 'jogar/descartar'
+  return (
+    <div
+      className={`flex items-center justify-center gap-2 rounded-full py-1 text-xs ${
+        isMyTurn ? 'bg-brass-500/15 text-brass-200' : 'text-bone-200/50'
+      }`}
+    >
+      <span className={`h-2 w-2 rounded-full ${isMyTurn ? 'animate-pulse bg-ember-500' : 'bg-white/20'}`} />
+      {local ? `Vez de ${name} · ${phaseTxt}` : isMyTurn ? `Sua vez · ${phaseTxt}` : `Vez de ${name}`}
+    </div>
+  )
+}
+
+function SeatChip({ state, seat, vertical }: { state: GameState; seat: Seat; vertical?: boolean }) {
+  const p = state.players[seat]
+  const count = state.hands[seat].length
+  const active = state.turn === seat
+  const team = teamOf(seat)
+  const mini = Array.from({ length: Math.min(count, 4) })
+  return (
+    <div className={`flex items-center gap-2 ${vertical ? 'flex-col' : ''}`}>
+      <div className={`grid h-9 w-9 place-items-center rounded-full border text-xs font-bold ${active ? 'border-brass-400 bg-felt-600 shadow-glow' : 'border-white/15 bg-black/30'}`}>
+        {p ? initials(p.name) : '—'}
+      </div>
+      <div className={vertical ? 'text-center' : ''}>
+        <div className="max-w-[70px] truncate text-xs font-semibold">{p?.name ?? 'vazio'}</div>
+        <div className={`text-[10px] uppercase ${team === 'nos' ? 'text-brass-300' : 'text-ember-400'}`}>
+          {team} · {count}
+        </div>
+      </div>
+      <div className="flex">
+        {mini.map((_, i) => (
+          <div key={i} style={{ marginLeft: i ? -14 : 0 }}>
+            <PlayingCard faceDown size="sm" className="!h-9 !w-6" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function Pile({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -18,153 +315,97 @@ function Pile({ label, children }: { label: string; children: React.ReactNode })
   )
 }
 
-export default function Table() {
-  const s = useGame()
-  const navigate = useNavigate()
-  const disconnect = useRoom((r) => r.disconnect)
-  const myTurn = s.turnSeat === 0
-
-  const leave = () => {
-    disconnect()
-    navigate('/')
-  }
-  const partner = s.players[2]
-  const left = s.players[1]
-  const right = s.players[3]
-  const topDiscard = s.discard[s.discard.length - 1]
-
+function TeamMelds({
+  state,
+  team,
+  label,
+  onMeldClick,
+}: {
+  state: GameState
+  team: 'nos' | 'eles'
+  label: string
+  onMeldClick?: (meldId: string) => void
+}) {
+  const melds = state.melds[team]
+  const reds = state.redThrees[team]
+  const empty = melds.length === 0 && reds.length === 0
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col px-3 pb-3">
-      <SocialLayer />
-      {/* Top bar: placar */}
-      <header className="flex items-center justify-between py-2">
-        <button onClick={leave} className="text-xs uppercase tracking-widest text-brass-400/70">
-          ← sair
-        </button>
-        <div className="panel flex items-center gap-4 rounded-full px-4 py-1.5">
-          <Score label="Nós" value={s.teams.nos.score} accent />
-          <div className="h-5 w-px bg-white/10" />
-          <Score label="Eles" value={s.teams.eles.score} />
-        </div>
-        <button
-          onClick={s.newGame}
-          className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] uppercase tracking-widest text-brass-300 transition-colors hover:bg-white/10"
-        >
-          novo jogo
-        </button>
-      </header>
-
-      {/* Parceiro (topo) */}
-      <div className="flex justify-center py-1">
-        <Seat player={partner} count={s.handCounts[2]} active={s.turnSeat === 2} />
-      </div>
-
-      {/* Linha do meio: oponentes + montes centrais */}
-      <div className="my-2 grid grid-cols-[auto_1fr_auto] items-center gap-1">
-        <Seat player={left} count={s.handCounts[1]} active={s.turnSeat === 1} orientation="vertical" />
-
-        <div
-          className="flex items-center justify-center gap-3 rounded-[1.4rem] border border-brass-500/25 py-4"
-          style={{
-            background: 'radial-gradient(120% 140% at 50% 0%, rgba(20,120,78,.45), rgba(0,0,0,.28))',
-            boxShadow: 'inset 0 2px 10px rgba(0,0,0,.45), inset 0 0 0 1px rgba(201,162,75,.08)',
-          }}
-        >
-          <Pile label={`monte ${s.stockCount}`}>
-            <button onClick={s.drawFromStock} disabled={!myTurn} className="disabled:opacity-50">
-              <PlayingCard faceDown size="md" />
-            </button>
-          </Pile>
-          <Pile label={`lixo ${s.discard.length}`}>
-            {topDiscard ? (
-              <button onClick={s.takeDiscard} disabled={!myTurn}>
-                <PlayingCard card={topDiscard} size="md" />
-              </button>
-            ) : (
-              <div className="grid h-24 w-16 place-items-center rounded-xl border border-dashed border-white/15 text-[10px] text-bone-200/30">
-                vazio
-              </div>
-            )}
-          </Pile>
-          <Pile label="mortos">
-            <div className="relative">
-              <PlayingCard faceDown size="md" className="!w-12" />
-              <div className="absolute -right-2 -top-1">
-                <PlayingCard faceDown size="md" className="!w-12" />
-              </div>
-            </div>
-          </Pile>
-        </div>
-
-        <Seat player={right} count={s.handCounts[3]} active={s.turnSeat === 3} orientation="vertical" />
-      </div>
-
-      {/* Jogos das duplas */}
-      <div className="space-y-2">
-        <MeldArea label="Nossos jogos" melds={s.teams.nos.melds} redThrees={s.teams.nos.redThrees} />
-        <MeldArea label="Jogos deles" melds={s.teams.eles.melds} redThrees={s.teams.eles.redThrees} />
-      </div>
-
-      <div className="flex-1" />
-
-      {/* Minha mão */}
-      <div className="mt-2">
-        <div className="mb-1 flex items-center justify-between px-1">
-          <span className="text-[10px] uppercase tracking-widest text-bone-200/50">
-            Sua mão · {s.myHand.length}
+    <div className="rounded-xl border border-white/5 bg-black/10 p-2">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-widest text-bone-200/50">{label}</span>
+        {reds.length > 0 && (
+          <span className="rounded-full bg-suit-red/80 px-2 py-0.5 text-[9px] font-bold text-white">
+            {reds.length} × 3♥ (+{reds.length * 100})
           </span>
-          <span className="text-[10px] text-brass-300">
-            {s.selected.size > 0 ? `${s.selected.size} selecionada(s)` : myTurn ? 'sua vez' : 'aguarde'}
-          </span>
-        </div>
-        <div key={s.round} className="flex overflow-x-auto pb-2 pt-3">
-          {s.myHand.map((c, i) => (
-            <motion.div
-              key={c.id}
-              initial={{ y: -120, opacity: 0, rotate: -8 }}
-              animate={{ y: 0, opacity: 1, rotate: 0 }}
-              transition={{ delay: i * 0.04, type: 'spring', stiffness: 320, damping: 26 }}
-              style={{ marginLeft: i ? -20 : 0 }}
+        )}
+      </div>
+      {empty ? (
+        <div className="py-2 text-center text-[11px] text-bone-200/30">sem jogos ainda</div>
+      ) : (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {melds.map((m) => (
+            <button
+              key={m.id}
+              onClick={onMeldClick ? () => onMeldClick(m.id) : undefined}
+              className={`flex shrink-0 items-center rounded-lg bg-black/15 p-1 ${onMeldClick ? 'ring-1 ring-brass-400/50 hover:ring-brass-300' : ''}`}
             >
-              <PlayingCard
-                card={c}
-                size="md"
-                selected={s.selected.has(c.id)}
-                onClick={() => s.toggleSelect(c.id)}
-              />
-            </motion.div>
+              {m.cards.map((c: Card, i: number) => (
+                <div key={c.id} style={{ marginLeft: i ? -26 : 0 }}>
+                  <PlayingCard card={c} size="sm" />
+                </div>
+              ))}
+              {isCanastra(m.cards) && (
+                <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${isCanastraLimpa(m.cards) ? 'bg-brass-400 text-ink' : 'bg-white/20'}`}>
+                  {isCanastraLimpa(m.cards) ? '200' : '100'}
+                </span>
+              )}
+            </button>
           ))}
         </div>
-      </div>
-
-      {/* Barra de ações */}
-      <div className="mt-1 flex gap-2">
-        <Button variant="ghost" className="flex-1 !px-2" onClick={s.meldSelected} disabled={s.selected.size < 3}>
-          Baixar
-        </Button>
-        <Button variant="gold" className="flex-1 !px-2" onClick={s.discardSelected} disabled={s.selected.size !== 1 || !myTurn}>
-          Descartar
-        </Button>
-        <Button variant="primary" className="flex-1 !px-2" disabled>
-          Bater
-        </Button>
-      </div>
-
-      {/* Reações ao vivo (cinzeiro + emotes compartilhados) */}
-      <div className="mt-2 flex justify-center">
-        <EmoteBar compact />
-      </div>
+      )}
     </div>
   )
 }
 
-function Score({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
+function EndOverlay({
+  state,
+  canAdvance,
+  onNext,
+  onLeave,
+}: {
+  state: GameState
+  canAdvance: boolean
+  onNext: () => void
+  onLeave: () => void
+}) {
+  const over = state.phase === 'matchOver'
+  const winnerTxt = state.winner === 'nos' ? 'Nós' : 'Eles'
   return (
-    <div className="text-center">
-      <div className={`text-[9px] uppercase tracking-widest ${accent ? 'text-brass-300' : 'text-ember-400'}`}>
-        {label}
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 px-6 backdrop-blur-sm">
+      <div className="panel w-full max-w-sm rounded-2xl p-6 text-center">
+        <h2 className="text-2xl text-gold">{over ? `🏆 Dupla ${winnerTxt} venceu!` : 'Fim da mão'}</h2>
+        <div className="my-4 flex justify-center gap-8">
+          <div>
+            <div className="text-xs uppercase tracking-widest text-brass-300">Nós</div>
+            <div className="font-display text-3xl">{state.scores.nos}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-ember-400">Eles</div>
+            <div className="font-display text-3xl">{state.scores.eles}</div>
+          </div>
+        </div>
+        {over ? (
+          <Button variant="gold" className="w-full" onClick={onLeave}>
+            Voltar ao início
+          </Button>
+        ) : canAdvance ? (
+          <Button variant="gold" className="w-full" onClick={onNext}>
+            Próxima mão
+          </Button>
+        ) : (
+          <p className="text-sm text-bone-200/60">Aguardando o anfitrião iniciar a próxima mão…</p>
+        )}
       </div>
-      <div className="font-display text-lg leading-none">{value}</div>
     </div>
   )
 }
