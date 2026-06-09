@@ -76,21 +76,7 @@ export const useRoom = create<RoomStore>((set, get) => ({
     }
 
     const joinedAt = Date.now()
-    const channel = supabase.channel(`room:${code}`, {
-      config: { presence: { key: me.id }, broadcast: { self: true } },
-    })
-
-    channel.on('presence', { event: 'sync' }, () => {
-      const state = channel.presenceState<RoomPlayer>()
-      const list = Object.values(state)
-        .map((e) => e[0])
-        .filter(Boolean)
-        .sort((a, b) => a.joinedAt - b.joinedAt)
-      const mine = list.find((p) => p.id === me.id)
-      set({ players: list, mySeat: mine?.seat ?? null })
-    })
-
-    channel.on('broadcast', { event: 'start' }, () => get().onStart?.())
+    let retry = 0
 
     const pushReaction = (r: Omit<Reaction, 'id' | 'ts'>) => {
       const reaction: Reaction = { ...r, id: `r${reactionSeq++}`, ts: Date.now() }
@@ -101,23 +87,64 @@ export const useRoom = create<RoomStore>((set, get) => ({
       )
     }
 
-    channel.on('broadcast', { event: 'smoke' }, ({ payload }) =>
-      pushReaction({ kind: 'smoke', name: payload?.name ?? '' }),
-    )
-    channel.on('broadcast', { event: 'emote' }, ({ payload }) =>
-      pushReaction({ kind: 'emote', emoji: payload?.emoji, name: payload?.name ?? '' }),
-    )
+    // (re)abre o canal com reconexão automática — redes de celular tropeçam às vezes
+    const open = () => {
+      const channel = supabase!.channel(`room:${code}`, {
+        config: { presence: { key: me.id }, broadcast: { self: true } },
+      })
 
-    set({ code, me, channel, status: 'connecting', joinedAt, players: [], mySeat: null })
+      channel.on('presence', { event: 'sync' }, () => {
+        const pres = channel.presenceState<RoomPlayer>()
+        const list = Object.values(pres)
+          .map((e) => e[0])
+          .filter(Boolean)
+          .sort((a, b) => a.joinedAt - b.joinedAt)
+        const mine = list.find((p) => p.id === me.id)
+        set({ players: list, mySeat: mine?.seat ?? null })
+      })
 
-    channel.subscribe(async (st) => {
-      if (st === 'SUBSCRIBED') {
-        set({ status: 'connected' })
-        await channel.track({ id: me.id, name: me.name || 'Convidado', seat: null, joinedAt })
-      } else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') {
-        set({ status: 'error' })
-      }
-    })
+      channel.on('broadcast', { event: 'start' }, () => get().onStart?.())
+      channel.on('broadcast', { event: 'smoke' }, ({ payload }) =>
+        pushReaction({ kind: 'smoke', name: payload?.name ?? '' }),
+      )
+      channel.on('broadcast', { event: 'emote' }, ({ payload }) =>
+        pushReaction({ kind: 'emote', emoji: payload?.emoji, name: payload?.name ?? '' }),
+      )
+
+      set({ channel })
+
+      channel.subscribe(async (st) => {
+        if (st === 'SUBSCRIBED') {
+          retry = 0
+          set({ status: 'connected' })
+          await channel.track({
+            id: me.id,
+            name: me.name || 'Convidado',
+            seat: get().mySeat ?? null,
+            joinedAt,
+          })
+        } else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT' || st === 'CLOSED') {
+          if (get().channel !== channel || get().code !== code) return // já trocou de sala/saiu
+          if (retry < 6) {
+            retry++
+            set({ status: 'connecting' })
+            try {
+              supabase!.removeChannel(channel)
+            } catch {
+              /* ignore */
+            }
+            setTimeout(() => {
+              if (get().code === code) open()
+            }, Math.min(1000 * retry, 5000))
+          } else {
+            set({ status: 'error' })
+          }
+        }
+      })
+    }
+
+    set({ code, me, channel: null, status: 'connecting', joinedAt, players: [], mySeat: null })
+    open()
   },
 
   disconnect: () => {
