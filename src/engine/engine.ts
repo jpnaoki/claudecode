@@ -98,12 +98,14 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       if (!canTakeDiscard(state, actor))
         return fail(state, 'Só dá pra pegar o lixo se a carta do topo formar um jogo com sua mão ou encaixar num jogo baixado.')
       const s = clone(state)
+      const taken = s.discard.length
+      const top = s.discard[taken - 1]
       s.hands[actor].push(...s.discard)
       s.discard = []
       s.lastDrawn = null
       s.hasDrawn = true
       s.phase = 'play'
-      s.log.push(`${seatName(actor)} pegou o lixo.`)
+      s.log.push(`${seatName(actor)} pegou o lixo (topo ${top.rank}${top.suit[0]} + ${taken - 1} cartas).`)
       return ok(s)
     }
 
