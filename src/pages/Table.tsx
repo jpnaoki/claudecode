@@ -5,7 +5,8 @@ import { useRoom } from '@/store/roomStore'
 import { getIdentity } from '@/lib/identity'
 import { Seat, teamOf, GameState } from '@/engine/state'
 import { isCanastra, isCanastraLimpa } from '@/engine/sequence'
-import { Card, isWild } from '@/lib/types'
+import { canTakeDiscard } from '@/engine/engine'
+import { Card, isWild, isRedThree } from '@/lib/types'
 import { sfx, unlockAudio, vibrate } from '@/lib/sfx'
 import PlayingCard from '@/components/PlayingCard'
 import Button from '@/components/ui/Button'
@@ -94,6 +95,15 @@ export default function Table() {
     if (state?.phase === 'matchOver') sfx.win()
   }, [state?.phase])
 
+  // destaca a carta recém-comprada por uns instantes
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!state?.lastDrawn) return
+    setHighlightId(state.lastDrawn)
+    const t = setTimeout(() => setHighlightId(null), 2600)
+    return () => clearTimeout(t)
+  }, [state?.lastDrawn])
+
   // ordem de exibição da mão (local, por aparelho) — preserva organização e anexa cartas novas
   const [order, setOrder] = useState<string[]>([])
   useEffect(() => {
@@ -148,9 +158,16 @@ export default function Table() {
   const hand = orderedHand.length === viewHand.length ? orderedHand : viewHand
   const organize = () => viewSeat != null && setOrder(sortedHandIds(state.hands[viewSeat]))
 
-  const doMeld = () => {
+  const selectedAllRed3 =
+    ids.length > 0 && ids.every((id) => { const card = byId.get(id); return !!card && isRedThree(card) })
+  const canBaixar = isMyTurn && state.phase === 'play' && (ids.length >= 3 || selectedAllRed3)
+  const podePegarLixo =
+    isMyTurn && state.phase === 'draw' && !state.hasDrawn && canTakeDiscard(state, state.turn)
+
+  const doBaixar = () => {
     sfx.play()
-    act({ type: 'meld', cardIds: ids })
+    if (selectedAllRed3) act({ type: 'layRedThrees', cardIds: ids })
+    else act({ type: 'meld', cardIds: ids })
     setSelected(new Set())
   }
   const doDiscard = () => {
@@ -161,6 +178,7 @@ export default function Table() {
   }
   const addTo = (meldId: string) => {
     if (ids.length === 0) return
+    sfx.play()
     act({ type: 'addToMeld', meldId, cardIds: ids })
     setSelected(new Set())
   }
@@ -230,6 +248,11 @@ export default function Table() {
       </div>
 
       {/* jogos das duplas */}
+      {ids.length > 0 && state.phase === 'play' && (
+        <div className="mb-1 rounded-lg bg-brass-500/10 py-1 text-center text-[10px] text-brass-200">
+          Toque num jogo abaixo pra <b>encaixar</b> · ou <b>Baixar</b> pra nova sequência
+        </div>
+      )}
       <div className="space-y-2">
         <TeamMelds
           state={state}
@@ -262,7 +285,7 @@ export default function Table() {
               </button>
             </div>
           </div>
-          <Hand cards={hand} selectedIds={selected} onToggle={toggle} onReorder={setOrder} />
+          <Hand cards={hand} selectedIds={selected} highlightId={highlightId} onToggle={toggle} onReorder={setOrder} />
         </div>
       )}
 
@@ -276,7 +299,7 @@ export default function Table() {
             <Button
               variant="primary"
               className="flex-1 !px-2"
-              disabled={!isMyTurn || state.hasDrawn || state.discard.length === 0 || state.discardLocked}
+              disabled={!podePegarLixo}
               onClick={() => { sfx.play(); act({ type: 'takeDiscard' }) }}
             >
               Pegar lixo
@@ -284,8 +307,8 @@ export default function Table() {
           </>
         ) : (
           <>
-            <Button variant="ghost" className="flex-1 !px-2" disabled={!isMyTurn || selected.size < 3} onClick={doMeld}>
-              Baixar
+            <Button variant="ghost" className="flex-1 !px-2" disabled={!canBaixar} onClick={doBaixar}>
+              {selectedAllRed3 ? 'Baixar 3♥ (+1)' : 'Baixar'}
             </Button>
             <Button variant="gold" className="flex-1 !px-2" disabled={!isMyTurn || selected.size !== 1} onClick={doDiscard}>
               Descartar
@@ -320,11 +343,13 @@ export default function Table() {
 function Hand({
   cards,
   selectedIds,
+  highlightId,
   onToggle,
   onReorder,
 }: {
   cards: Card[]
   selectedIds: Set<string>
+  highlightId: string | null
   onToggle: (id: string) => void
   onReorder: (ids: string[]) => void
 }) {
@@ -376,9 +401,15 @@ function Hand({
           style={{ marginLeft: i ? -14 : 0, touchAction: 'none' }}
           className={`cursor-grab transition-transform ${
             activeDrag === c.id ? 'z-20 -translate-y-3 scale-105 opacity-80' : ''
-          }`}
+          } ${highlightId === c.id ? 'animate-deal z-10' : ''}`}
         >
-          <PlayingCard card={c} size="md" selected={selectedIds.has(c.id)} />
+          <div
+            className={
+              highlightId === c.id ? 'rounded-xl shadow-glow ring-2 ring-brass-300 ring-offset-1 ring-offset-felt-800' : ''
+            }
+          >
+            <PlayingCard card={c} size="md" selected={selectedIds.has(c.id)} />
+          </div>
         </div>
       ))}
     </div>
@@ -496,8 +527,11 @@ function TeamMelds({
             <button
               key={m.id}
               onClick={onMeldClick ? () => onMeldClick(m.id) : undefined}
-              className={`flex shrink-0 items-center rounded-lg bg-black/15 p-1 ${onMeldClick ? 'ring-1 ring-brass-400/50 hover:ring-brass-300' : ''}`}
+              className={`flex shrink-0 items-center rounded-lg bg-black/15 p-1 ${
+                onMeldClick ? 'animate-pulse ring-2 ring-brass-300 hover:ring-brass-200' : ''
+              }`}
             >
+              {onMeldClick && <span className="px-1 text-base font-bold text-brass-300">＋</span>}
               {m.cards.map((c: Card, i: number) => (
                 <div key={c.id} style={{ marginLeft: i ? -26 : 0 }}>
                   <PlayingCard card={c} size="sm" />

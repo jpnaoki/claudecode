@@ -54,10 +54,11 @@ describe('dealHand', () => {
     expect(s.mortos.length).toBe(2)
     expect(s.mortos[0].length).toBe(11)
     expect(s.mortos[1].length).toBe(11)
-    // mãos somam 44 (3 vermelhos foram repostos por outras cartas)
+    // 3 vermelhos NÃO saem no deal — ficam na mão; bônus começa vazio
+    expect(redThrees).toBe(0)
     expect(totalMaos).toBe(44)
-    // total de cartas conservado: 44 mãos + 22 mortos + monte + 3vermelhos baixados = 104
-    expect(totalMaos + 22 + s.stock.length + redThrees).toBe(104)
+    expect(s.stock.length).toBe(38)
+    expect(totalMaos + 22 + s.stock.length).toBe(104)
     expect(s.turn).toBe(1) // dealer 0 → joga o assento 1
     expect(s.phase).toBe('draw')
   })
@@ -120,5 +121,76 @@ describe('baixar sequência', () => {
     s.hands[1] = [c('4', 'copas'), c('7', 'copas'), c('K', 'ouros')]
     const r = apply(s, { type: 'meld', cardIds: ['4-copas-0', '7-copas-0', 'K-ouros-0'] }, 1)
     expect(r.error).toBeTruthy()
+  })
+})
+
+const playState = (seed: string) => {
+  const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed })
+  s.turn = 1
+  s.phase = 'play'
+  s.hasDrawn = true
+  return s
+}
+
+describe('coringa de naipe diferente na sequência (bug do usuário)', () => {
+  it('validateSequence aceita Q♣ K♣ + 2♥ + A♣', () => {
+    expect(
+      validateSequence([c('Q', 'paus'), c('K', 'paus'), c('2', 'copas'), c('A', 'paus')]).ok,
+    ).toBe(true)
+  })
+  it('addToMeld: adiciona A♣ a um jogo Q♣ K♣ 2♥', () => {
+    const s = playState('wild')
+    s.melds.eles = [{ id: 'm1', cards: [c('Q', 'paus'), c('K', 'paus'), c('2', 'copas')] }]
+    s.hands[1] = [c('A', 'paus')]
+    const r = apply(s, { type: 'addToMeld', meldId: 'm1', cardIds: ['A-paus-0'] }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.melds.eles[0].cards.length).toBe(4)
+  })
+})
+
+describe('3 vermelho manual', () => {
+  it('baixar 3 vermelho dá +100 e compra extra (mantém o tamanho da mão)', () => {
+    const s = playState('r3')
+    s.hands[1] = [c('3', 'copas', 5), c('K', 'ouros'), c('4', 'paus')]
+    const before = s.stock.length
+    const r = apply(s, { type: 'layRedThrees', cardIds: ['3-copas-5'] }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.redThrees.eles.length).toBe(1)
+    expect(r.state.hands[1].length).toBe(3) // tirou o 3, comprou 1
+    expect(r.state.stock.length).toBe(before - 1)
+  })
+  it('rejeita baixar 3 preto como vermelho', () => {
+    const s = playState('r3b')
+    s.hands[1] = [c('3', 'espadas', 5), c('K', 'ouros')]
+    expect(apply(s, { type: 'layRedThrees', cardIds: ['3-espadas-5'] }, 1).error).toBeTruthy()
+  })
+})
+
+describe('pegar o lixo (restrição)', () => {
+  const draw = (s: ReturnType<typeof playState>) => {
+    s.phase = 'draw'
+    s.hasDrawn = false
+    return s
+  }
+  it('rejeita se o topo não casa com nada', () => {
+    const s = draw(playState('lx1'))
+    s.discard = [c('K', 'ouros', 7)]
+    s.hands[1] = [c('4', 'copas'), c('9', 'espadas'), c('A', 'paus')]
+    expect(apply(s, { type: 'takeDiscard' }, 1).error).toBeTruthy()
+  })
+  it('permite se o topo forma sequência com a mão', () => {
+    const s = draw(playState('lx2'))
+    s.discard = [c('6', 'copas', 7)]
+    s.hands[1] = [c('4', 'copas'), c('5', 'copas'), c('K', 'ouros')]
+    const r = apply(s, { type: 'takeDiscard' }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.discard.length).toBe(0)
+  })
+  it('permite se o topo encaixa num jogo baixado', () => {
+    const s = draw(playState('lx3'))
+    s.discard = [c('7', 'copas', 7)]
+    s.melds.eles = [{ id: 'm1', cards: [c('4', 'copas'), c('5', 'copas'), c('6', 'copas')] }]
+    s.hands[1] = [c('K', 'ouros')]
+    expect(apply(s, { type: 'takeDiscard' }, 1).error).toBeUndefined()
   })
 })

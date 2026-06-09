@@ -1,4 +1,4 @@
-import { Card, isRedThree } from '@/lib/types'
+import { Card } from '@/lib/types'
 import { buildDeck, shuffle } from '@/lib/deck'
 
 export type Seat = 0 | 1 | 2 | 3
@@ -34,6 +34,7 @@ export interface GameState {
   turn: Seat
   phase: Phase
   hasDrawn: boolean // já comprou nesta vez?
+  lastDrawn: string | null // id da carta recém-comprada (pra animar na mão)
   target: number
   dealer: Seat
   winner?: Team
@@ -58,19 +59,8 @@ export function dealHand(opts: {
   for (let i = 0; i < 11; i++) for (const s of SEATS) hands[s].push(d.shift()!)
   const mortos = [d.splice(0, 11), d.splice(0, 11)]
 
+  // 3 vermelhos NÃO saem mais automaticamente — ficam na mão e o jogador baixa (ganha compra extra)
   const redThrees: Record<Team, Card[]> = { nos: [], eles: [] }
-  // tira 3 vermelhos das mãos e repõe cartas; vira bônus da dupla do assento
-  for (const s of SEATS) {
-    const keep: Card[] = []
-    for (const c of hands[s]) {
-      if (isRedThree(c)) {
-        redThrees[teamOf(s)].push(c)
-        const repl = d.shift()
-        if (repl) keep.push(repl)
-      } else keep.push(c)
-    }
-    hands[s] = keep
-  }
 
   const firstToPlay = ((opts.dealer + 1) % 4) as Seat
   return {
@@ -89,6 +79,7 @@ export function dealHand(opts: {
     turn: firstToPlay,
     phase: 'draw',
     hasDrawn: false,
+    lastDrawn: null,
     target: opts.target,
     dealer: opts.dealer,
     log: ['Mão distribuída.'],

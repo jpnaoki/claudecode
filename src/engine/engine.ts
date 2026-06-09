@@ -10,8 +10,30 @@ export type Action =
   | { type: 'takeDiscard' }
   | { type: 'meld'; cardIds: string[] }
   | { type: 'addToMeld'; meldId: string; cardIds: string[] }
+  | { type: 'layRedThrees'; cardIds: string[] }
   | { type: 'discard'; cardId: string }
   | { type: 'nextHand' }
+
+/**
+ * Pode pegar o lixo? Só se a carta do topo: (a) encaixar num jogo já baixado da dupla, ou
+ * (b) formar uma sequência válida com 2 cartas da mão. (3 no topo nunca; lixo trancado nunca.)
+ */
+export function canTakeDiscard(state: GameState, seat: Seat): boolean {
+  if (state.discardLocked) return false
+  const top = state.discard[state.discard.length - 1]
+  if (!top || top.rank === '3') return false
+  const team = teamOf(seat)
+  for (const m of state.melds[team]) {
+    if (validateSequence([...m.cards, top]).ok) return true
+  }
+  const hand = state.hands[seat]
+  for (let i = 0; i < hand.length; i++) {
+    for (let j = i + 1; j < hand.length; j++) {
+      if (validateSequence([top, hand[i], hand[j]]).ok) return true
+    }
+  }
+  return false
+}
 
 export interface ApplyResult {
   state: GameState
@@ -61,16 +83,9 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       if (state.phase !== 'draw' || state.hasDrawn) return fail(state, 'Você já comprou nesta vez.')
       const s = clone(state)
       if (s.stock.length === 0) return endHand(s) // monte acabou: encerra a mão
-      const team = teamOf(actor)
-      // compra do topo; 3 vermelho baixa sozinho e compra de novo
-      let card = s.stock.pop()!
-      while (isRedThree(card)) {
-        s.redThrees[team].push(card)
-        s.log.push(`${seatName(actor)} tirou um 3 vermelho (+100) e comprou outra.`)
-        if (s.stock.length === 0) break
-        card = s.stock.pop()!
-      }
-      if (!isRedThree(card)) s.hands[actor].push(card)
+      const card = s.stock.pop()!
+      s.hands[actor].push(card) // 3 vermelho também entra normal; o jogador baixa depois
+      s.lastDrawn = card.id
       s.hasDrawn = true
       s.phase = 'play'
       return ok(s)
@@ -80,12 +95,39 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       if (state.phase !== 'draw' || state.hasDrawn) return fail(state, 'Você já comprou nesta vez.')
       if (state.discardLocked) return fail(state, 'O lixo está trancado (3 preto no topo).')
       if (state.discard.length === 0) return fail(state, 'O lixo está vazio.')
+      if (!canTakeDiscard(state, actor))
+        return fail(state, 'Só dá pra pegar o lixo se a carta do topo formar um jogo com sua mão ou encaixar num jogo baixado.')
       const s = clone(state)
       s.hands[actor].push(...s.discard)
       s.discard = []
+      s.lastDrawn = null
       s.hasDrawn = true
       s.phase = 'play'
       s.log.push(`${seatName(actor)} pegou o lixo.`)
+      return ok(s)
+    }
+
+    case 'layRedThrees': {
+      if (state.phase !== 'play') return fail(state, 'Compre antes de baixar.')
+      const picked = pull(state.hands[actor], action.cardIds)
+      if (!picked || picked.picked.length === 0) return fail(state, 'Cartas inválidas.')
+      if (!picked.picked.every(isRedThree)) return fail(state, 'Aqui só entram 3 vermelhos.')
+      const s = clone(state)
+      const team = teamOf(actor)
+      s.hands[actor] = picked.rest
+      let extra = 0
+      for (const c of picked.picked) {
+        s.redThrees[team].push(c)
+        if (s.stock.length > 0) {
+          const repl = s.stock.pop()!
+          s.hands[actor].push(repl)
+          s.lastDrawn = repl.id
+          extra++
+        }
+      }
+      s.log.push(
+        `${seatName(actor)} baixou ${picked.picked.length} três vermelho (+${picked.picked.length * 100}) e comprou ${extra}.`,
+      )
       return ok(s)
     }
 
@@ -156,6 +198,7 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       s.turn = ((actor + 1) % 4) as Seat
       s.phase = 'draw'
       s.hasDrawn = false
+      s.lastDrawn = null
       return ok(s)
     }
   }
