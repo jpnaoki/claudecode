@@ -9,6 +9,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      selfDestroying: true, // TEMP durante depuração: limpa SW antigo e não cacheia (sempre versão nova)
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'Tranca Online',
