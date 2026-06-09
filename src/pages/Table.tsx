@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMatch } from '@/store/matchStore'
 import { useRoom } from '@/store/roomStore'
@@ -6,6 +6,7 @@ import { getIdentity } from '@/lib/identity'
 import { Seat, teamOf, GameState } from '@/engine/state'
 import { isCanastra, isCanastraLimpa } from '@/engine/sequence'
 import { Card, isWild } from '@/lib/types'
+import { sfx, unlockAudio, vibrate } from '@/lib/sfx'
 import PlayingCard from '@/components/PlayingCard'
 import Button from '@/components/ui/Button'
 import EmoteBar from '@/components/social/EmoteBar'
@@ -67,6 +68,32 @@ export default function Table() {
   // limpa seleção ao trocar de quem joga
   useEffect(() => setSelected(new Set()), [state?.turn, viewSeat])
 
+  // destrava o áudio no primeiro toque (iOS)
+  useEffect(() => {
+    const h = () => unlockAudio()
+    window.addEventListener('pointerdown', h, { once: true })
+    return () => window.removeEventListener('pointerdown', h)
+  }, [])
+
+  // aviso suave: cue ao começar a vez + nudge após 60s sem jogar
+  const [nudge, setNudge] = useState(false)
+  useEffect(() => {
+    setNudge(false)
+    if (!state || !isMyTurn || (state.phase !== 'draw' && state.phase !== 'play')) return
+    sfx.play()
+    const t = setTimeout(() => {
+      setNudge(true)
+      sfx.turn()
+      vibrate(60)
+    }, 60000)
+    return () => clearTimeout(t)
+  }, [state?.turn, state?.rev, isMyTurn, state?.phase])
+
+  // som de vitória
+  useEffect(() => {
+    if (state?.phase === 'matchOver') sfx.win()
+  }, [state?.phase])
+
   // ordem de exibição da mão (local, por aparelho) — preserva organização e anexa cartas novas
   const [order, setOrder] = useState<string[]>([])
   useEffect(() => {
@@ -122,11 +149,13 @@ export default function Table() {
   const organize = () => viewSeat != null && setOrder(sortedHandIds(state.hands[viewSeat]))
 
   const doMeld = () => {
+    sfx.play()
     act({ type: 'meld', cardIds: ids })
     setSelected(new Set())
   }
   const doDiscard = () => {
     if (ids.length !== 1) return
+    sfx.play()
     act({ type: 'discard', cardId: ids[0] })
     setSelected(new Set())
   }
@@ -155,7 +184,7 @@ export default function Table() {
         </span>
       </header>
 
-      <TurnBanner state={state} isMyTurn={isMyTurn} local={local} />
+      <TurnBanner state={state} isMyTurn={isMyTurn} local={local} nudge={nudge} />
 
       {/* parceiro (topo) */}
       <div className="flex justify-center py-1">
@@ -233,18 +262,7 @@ export default function Table() {
               </button>
             </div>
           </div>
-          <div className="flex flex-wrap justify-center gap-y-2 pt-2">
-            {hand.map((c, i) => (
-              <div key={c.id} style={{ marginLeft: i ? -14 : 0 }}>
-                <PlayingCard
-                  card={c}
-                  size="md"
-                  selected={selected.has(c.id)}
-                  onClick={() => toggle(c.id)}
-                />
-              </div>
-            ))}
-          </div>
+          <Hand cards={hand} selectedIds={selected} onToggle={toggle} onReorder={setOrder} />
         </div>
       )}
 
@@ -252,14 +270,14 @@ export default function Table() {
       <div className="mt-2 flex gap-2">
         {state.phase === 'draw' ? (
           <>
-            <Button variant="gold" className="flex-1 !px-2" disabled={!isMyTurn || state.hasDrawn} onClick={() => act({ type: 'draw' })}>
+            <Button variant="gold" className="flex-1 !px-2" disabled={!isMyTurn || state.hasDrawn} onClick={() => { sfx.play(); act({ type: 'draw' }) }}>
               Comprar
             </Button>
             <Button
               variant="primary"
               className="flex-1 !px-2"
               disabled={!isMyTurn || state.hasDrawn || state.discard.length === 0 || state.discardLocked}
-              onClick={() => act({ type: 'takeDiscard' })}
+              onClick={() => { sfx.play(); act({ type: 'takeDiscard' }) }}
             >
               Pegar lixo
             </Button>
@@ -298,6 +316,75 @@ export default function Table() {
   )
 }
 
+/** Mão do jogador: tocar pra selecionar, segurar e arrastar pra reordenar (toque ou mouse). */
+function Hand({
+  cards,
+  selectedIds,
+  onToggle,
+  onReorder,
+}: {
+  cards: Card[]
+  selectedIds: Set<string>
+  onToggle: (id: string) => void
+  onReorder: (ids: string[]) => void
+}) {
+  const dragId = useRef<string | null>(null)
+  const moved = useRef(false)
+  const start = useRef({ x: 0, y: 0 })
+  const [activeDrag, setActiveDrag] = useState<string | null>(null)
+
+  const down = (e: React.PointerEvent, id: string) => {
+    dragId.current = id
+    moved.current = false
+    start.current = { x: e.clientX, y: e.clientY }
+  }
+
+  const move = (e: React.PointerEvent) => {
+    if (!dragId.current) return
+    if (!moved.current) {
+      if (Math.hypot(e.clientX - start.current.x, e.clientY - start.current.y) < 8) return
+      moved.current = true
+      setActiveDrag(dragId.current)
+    }
+    const over = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest('[data-card-id]')
+    const overId = over?.getAttribute('data-card-id')
+    if (!overId || overId === dragId.current) return
+    const ids = cards.map((c) => c.id)
+    const from = ids.indexOf(dragId.current)
+    const to = ids.indexOf(overId)
+    if (from < 0 || to < 0) return
+    ids.splice(to, 0, ids.splice(from, 1)[0])
+    onReorder(ids)
+  }
+
+  const up = (id: string) => {
+    if (!moved.current) onToggle(id) // foi um toque → seleciona
+    dragId.current = null
+    moved.current = false
+    setActiveDrag(null)
+  }
+
+  return (
+    <div className="flex flex-wrap justify-center gap-y-2 pt-2" onPointerMove={move}>
+      {cards.map((c, i) => (
+        <div
+          key={c.id}
+          data-card-id={c.id}
+          onPointerDown={(e) => down(e, c.id)}
+          onPointerUp={() => up(c.id)}
+          onPointerCancel={() => up(c.id)}
+          style={{ marginLeft: i ? -14 : 0, touchAction: 'none' }}
+          className={`cursor-grab transition-transform ${
+            activeDrag === c.id ? 'z-20 -translate-y-3 scale-105 opacity-80' : ''
+          }`}
+        >
+          <PlayingCard card={c} size="md" selected={selectedIds.has(c.id)} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ScoreBadge({ label, value, accent, active }: { label: string; value: number; accent?: boolean; active?: boolean }) {
   return (
     <div className={`text-center ${active ? '' : 'opacity-70'}`}>
@@ -307,17 +394,35 @@ function ScoreBadge({ label, value, accent, active }: { label: string; value: nu
   )
 }
 
-function TurnBanner({ state, isMyTurn, local }: { state: GameState; isMyTurn: boolean; local: boolean }) {
+function TurnBanner({
+  state,
+  isMyTurn,
+  local,
+  nudge,
+}: {
+  state: GameState
+  isMyTurn: boolean
+  local: boolean
+  nudge: boolean
+}) {
   const name = state.players[state.turn]?.name ?? `Assento ${state.turn}`
   const phaseTxt = state.phase === 'draw' ? 'comprar' : 'jogar/descartar'
   return (
     <div
-      className={`flex items-center justify-center gap-2 rounded-full py-1 text-xs ${
-        isMyTurn ? 'bg-brass-500/15 text-brass-200' : 'text-bone-200/50'
+      className={`flex items-center justify-center gap-2 rounded-full py-1 text-xs transition-colors ${
+        nudge
+          ? 'animate-pulse bg-ember-500/25 font-semibold text-ember-200 ring-1 ring-ember-500/50'
+          : isMyTurn
+            ? 'bg-brass-500/15 text-brass-200'
+            : 'text-bone-200/50'
       }`}
     >
       <span className={`h-2 w-2 rounded-full ${isMyTurn ? 'animate-pulse bg-ember-500' : 'bg-white/20'}`} />
-      {local ? `Vez de ${name} · ${phaseTxt}` : isMyTurn ? `Sua vez · ${phaseTxt}` : `Vez de ${name}`}
+      {local
+        ? `Vez de ${name} · ${phaseTxt}`
+        : isMyTurn
+          ? `${nudge ? '⏰ ' : ''}Sua vez · ${phaseTxt}`
+          : `Vez de ${name}`}
     </div>
   )
 }
