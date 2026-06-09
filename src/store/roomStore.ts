@@ -34,6 +34,7 @@ interface RoomStore {
   mySeat: number | null
   joinedAt: number
   onStart?: () => void
+  lastStatus: string | null // motivo da última falha de realtime (diagnóstico)
 
   setOnStart: (fn?: () => void) => void
   connect: (code: string, me: Identity) => void
@@ -53,6 +54,7 @@ export const useRoom = create<RoomStore>((set, get) => ({
   reactions: [],
   mySeat: null,
   joinedAt: Date.now(),
+  lastStatus: null,
 
   setOnStart: (fn) => set({ onStart: fn }),
 
@@ -112,20 +114,24 @@ export const useRoom = create<RoomStore>((set, get) => ({
       )
 
       set({ channel })
+      let scheduled = false
 
-      channel.subscribe(async (st) => {
+      channel.subscribe(async (st, err) => {
         if (st === 'SUBSCRIBED') {
           retry = 0
-          set({ status: 'connected' })
+          scheduled = false
+          set({ status: 'connected', lastStatus: 'SUBSCRIBED' })
           await channel.track({
             id: me.id,
             name: me.name || 'Convidado',
             seat: get().mySeat ?? null,
             joinedAt,
           })
-        } else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT' || st === 'CLOSED') {
-          if (get().channel !== channel || get().code !== code) return // já trocou de sala/saiu
+        } else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') {
+          set({ lastStatus: err ? `${st}: ${err.message}` : st })
+          if (get().channel !== channel || get().code !== code || scheduled) return
           if (retry < 6) {
+            scheduled = true
             retry++
             set({ status: 'connecting' })
             try {
@@ -140,6 +146,7 @@ export const useRoom = create<RoomStore>((set, get) => ({
             set({ status: 'error' })
           }
         }
+        // 'CLOSED' é ignorado (acontece no removeChannel; não conta como falha)
       })
     }
 

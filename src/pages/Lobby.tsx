@@ -20,6 +20,7 @@ export default function Lobby() {
 
   const players = useRoom((s) => s.players)
   const status = useRoom((s) => s.status)
+  const lastStatus = useRoom((s) => s.lastStatus)
   const mySeat = useRoom((s) => s.mySeat)
   const connect = useRoom((s) => s.connect)
   const disconnect = useRoom((s) => s.disconnect)
@@ -105,6 +106,12 @@ export default function Lobby() {
         </button>
         <StatusPill status={status} />
       </header>
+
+      {(status === 'error' || status === 'no-backend') && lastStatus && (
+        <div className="mb-2 rounded-lg border border-ember-500/30 bg-ember-600/10 px-3 py-1.5 text-center text-[10px] text-ember-300">
+          diagnóstico: {lastStatus}
+        </div>
+      )}
 
       {/* Código da sala */}
       <div className="panel rounded-2xl p-5 text-center">
