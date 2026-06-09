@@ -19,6 +19,7 @@ export interface SeatPlayer {
 }
 
 export interface GameState {
+  rev: number // versão monotônica (o polling aplica só o estado mais novo)
   players: Record<Seat, SeatPlayer | null> // quem está em cada assento
   handNumber: number
   stock: Card[]
@@ -73,6 +74,7 @@ export function dealHand(opts: {
 
   const firstToPlay = ((opts.dealer + 1) % 4) as Seat
   return {
+    rev: 0,
     players: opts.players ?? { 0: null, 1: null, 2: null, 3: null },
     handNumber: opts.handNumber,
     stock: d,

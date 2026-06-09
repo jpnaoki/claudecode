@@ -1,7 +1,15 @@
 import { create } from 'zustand'
-import type { RealtimeChannel } from '@supabase/supabase-js'
-import { supabase } from '@/lib/supabase'
 import { Identity } from '@/lib/identity'
+import {
+  heartbeat,
+  fetchRoomPlayers,
+  leaveRoom,
+  sendEvent,
+  fetchEvents,
+  latestEventId,
+  fetchGame,
+} from '@/engine/sync'
+import { supabase } from '@/lib/supabase'
 
 export type RoomStatus = 'idle' | 'connecting' | 'connected' | 'no-backend' | 'error'
 
@@ -23,18 +31,25 @@ export interface Reaction {
 export const teamOfSeat = (seat: number): 'nos' | 'eles' => (seat % 2 === 0 ? 'nos' : 'eles')
 
 let reactionSeq = 0
+let timers: ReturnType<typeof setInterval>[] = []
+let eventCursor = 0
+let started = false
+let mySeatLocal: number | null = null
+
+const clearTimers = () => {
+  timers.forEach(clearInterval)
+  timers = []
+}
 
 interface RoomStore {
   code: string | null
   me: Identity | null
-  channel: RealtimeChannel | null
   status: RoomStatus
   players: RoomPlayer[]
   reactions: Reaction[]
   mySeat: number | null
-  joinedAt: number
+  lastStatus: string | null
   onStart?: () => void
-  lastStatus: string | null // motivo da última falha de realtime (diagnóstico)
 
   setOnStart: (fn?: () => void) => void
   connect: (code: string, me: Identity) => void
@@ -45,150 +60,122 @@ interface RoomStore {
   sendEmote: (emoji: string) => void
 }
 
-export const useRoom = create<RoomStore>((set, get) => ({
-  code: null,
-  me: null,
-  channel: null,
-  status: 'idle',
-  players: [],
-  reactions: [],
-  mySeat: null,
-  joinedAt: Date.now(),
-  lastStatus: null,
+export const useRoom = create<RoomStore>((set, get) => {
+  const pushReaction = (kind: 'smoke' | 'emote', name: string, emoji?: string) => {
+    const reaction: Reaction = { id: `r${reactionSeq++}`, kind, name, emoji, ts: Date.now() }
+    set((st) => ({ reactions: [...st.reactions, reaction] }))
+    setTimeout(
+      () => set((st) => ({ reactions: st.reactions.filter((x) => x.id !== reaction.id) })),
+      4000,
+    )
+  }
 
-  setOnStart: (fn) => set({ onStart: fn }),
+  const pollPlayers = async (code: string, me: Identity) => {
+    const rows = await fetchRoomPlayers(code)
+    const list: RoomPlayer[] = rows
+      .map((r) => ({ id: r.id, name: r.name, seat: r.seat, joinedAt: Date.parse(r.last_seen) || 0 }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    const mine = list.find((p) => p.id === me.id)
+    set({ players: list, status: 'connected', mySeat: mine?.seat ?? mySeatLocal })
+  }
 
-  connect: (code, me) => {
-    const s = get()
-    // idempotente: já conectado na mesma sala com o mesmo jogador
-    if (s.channel && s.code === code && s.me?.id === me.id) {
-      set({ me })
-      return
+  const pollEvents = async (code: string) => {
+    const evs = await fetchEvents(code, eventCursor)
+    for (const e of evs) {
+      eventCursor = Math.max(eventCursor, e.id)
+      if (e.kind === 'smoke') pushReaction('smoke', e.payload?.name ?? '')
+      else if (e.kind === 'emote') pushReaction('emote', e.payload?.name ?? '', e.payload?.emoji)
     }
-    if (s.channel) supabase?.removeChannel(s.channel)
-    try {
-      localStorage.setItem('tranca.room', code)
-    } catch {
-      /* ignore */
+  }
+
+  const pollGameStart = async (code: string) => {
+    if (started) return
+    const game = await fetchGame(code)
+    if (game) {
+      started = true
+      get().onStart?.()
     }
+  }
 
-    if (!supabase) {
-      set({ status: 'no-backend', code, me })
-      return
-    }
+  return {
+    code: null,
+    me: null,
+    status: 'idle',
+    players: [],
+    reactions: [],
+    mySeat: null,
+    lastStatus: null,
 
-    const joinedAt = Date.now()
-    let retry = 0
+    setOnStart: (fn) => set({ onStart: fn }),
 
-    const pushReaction = (r: Omit<Reaction, 'id' | 'ts'>) => {
-      const reaction: Reaction = { ...r, id: `r${reactionSeq++}`, ts: Date.now() }
-      set((st) => ({ reactions: [...st.reactions, reaction] }))
-      setTimeout(
-        () => set((st) => ({ reactions: st.reactions.filter((x) => x.id !== reaction.id) })),
-        4000,
-      )
-    }
+    connect: (code, me) => {
+      const s = get()
+      if (s.code === code && s.me?.id === me.id && timers.length) {
+        set({ me })
+        return
+      }
+      clearTimers()
+      started = false
+      eventCursor = 0
+      mySeatLocal = null
+      try {
+        localStorage.setItem('tranca.room', code)
+      } catch {
+        /* ignore */
+      }
+      if (!supabase) {
+        set({ status: 'no-backend', code, me, lastStatus: 'sem backend (.env)' })
+        return
+      }
+      set({ code, me, status: 'connecting', players: [], mySeat: null, lastStatus: null })
 
-    // (re)abre o canal com reconexão automática — redes de celular tropeçam às vezes
-    const open = () => {
-      const channel = supabase!.channel(`room:${code}`, {
-        config: { presence: { key: me.id }, broadcast: { self: true } },
-      })
+      // bate o ponto já, e depois em ciclo
+      void heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal })
+      void latestEventId(code).then((id) => (eventCursor = id))
+      void pollPlayers(code, me)
 
-      channel.on('presence', { event: 'sync' }, () => {
-        const pres = channel.presenceState<RoomPlayer>()
-        const list = Object.values(pres)
-          .map((e) => e[0])
-          .filter(Boolean)
-          .sort((a, b) => a.joinedAt - b.joinedAt)
-        const mine = list.find((p) => p.id === me.id)
-        set({ players: list, mySeat: mine?.seat ?? null })
-      })
+      timers.push(setInterval(() => heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal }), 4000))
+      timers.push(setInterval(() => pollPlayers(code, me), 2500))
+      timers.push(setInterval(() => pollEvents(code), 2000))
+      timers.push(setInterval(() => pollGameStart(code), 2500))
+    },
 
-      channel.on('broadcast', { event: 'start' }, () => get().onStart?.())
-      channel.on('broadcast', { event: 'smoke' }, ({ payload }) =>
-        pushReaction({ kind: 'smoke', name: payload?.name ?? '' }),
-      )
-      channel.on('broadcast', { event: 'emote' }, ({ payload }) =>
-        pushReaction({ kind: 'emote', emoji: payload?.emoji, name: payload?.name ?? '' }),
-      )
+    disconnect: () => {
+      clearTimers()
+      const { code, me } = get()
+      if (code && me) void leaveRoom(code, me.id)
+      started = false
+      mySeatLocal = null
+      try {
+        localStorage.removeItem('tranca.room')
+      } catch {
+        /* ignore */
+      }
+      set({ code: null, me: null, status: 'idle', players: [], reactions: [], mySeat: null })
+    },
 
-      set({ channel })
-      let scheduled = false
+    chooseSeat: (seat) => {
+      const { code, me } = get()
+      mySeatLocal = seat
+      set({ mySeat: seat })
+      if (code && me) {
+        void heartbeat(code, { id: me.id, name: me.name, seat }).then(() => pollPlayers(code, me))
+      }
+    },
 
-      channel.subscribe(async (st, err) => {
-        if (st === 'SUBSCRIBED') {
-          retry = 0
-          scheduled = false
-          set({ status: 'connected', lastStatus: 'SUBSCRIBED' })
-          await channel.track({
-            id: me.id,
-            name: me.name || 'Convidado',
-            seat: get().mySeat ?? null,
-            joinedAt,
-          })
-        } else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') {
-          set({ lastStatus: err ? `${st}: ${err.message}` : st })
-          if (get().channel !== channel || get().code !== code || scheduled) return
-          if (retry < 6) {
-            scheduled = true
-            retry++
-            set({ status: 'connecting' })
-            try {
-              supabase!.removeChannel(channel)
-            } catch {
-              /* ignore */
-            }
-            setTimeout(() => {
-              if (get().code === code) open()
-            }, Math.min(1000 * retry, 5000))
-          } else {
-            set({ status: 'error' })
-          }
-        }
-        // 'CLOSED' é ignorado (acontece no removeChannel; não conta como falha)
-      })
-    }
+    start: () => {
+      // sem WebSocket: o início é detectado pelo polling quando a partida aparece em `games`
+      started = false
+    },
 
-    set({ code, me, channel: null, status: 'connecting', joinedAt, players: [], mySeat: null })
-    open()
-  },
+    sendSmoke: () => {
+      const { code, me } = get()
+      if (code) void sendEvent(code, 'smoke', { name: me?.name })
+    },
 
-  disconnect: () => {
-    const { channel } = get()
-    if (channel) supabase?.removeChannel(channel)
-    try {
-      localStorage.removeItem('tranca.room')
-    } catch {
-      /* ignore */
-    }
-    set({ channel: null, code: null, status: 'idle', players: [], reactions: [], mySeat: null })
-  },
-
-  chooseSeat: (seat) => {
-    const { channel, me, joinedAt } = get()
-    if (!channel || !me) return
-    set({ mySeat: seat })
-    channel.track({ id: me.id, name: me.name || 'Convidado', seat, joinedAt })
-  },
-
-  start: () => {
-    const { channel } = get()
-    channel?.send({ type: 'broadcast', event: 'start', payload: {} })
-  },
-
-  sendSmoke: () => {
-    const { channel, me } = get()
-    channel?.send({ type: 'broadcast', event: 'smoke', payload: { name: me?.name } })
-  },
-
-  sendEmote: (emoji) => {
-    const { channel, me } = get()
-    channel?.send({ type: 'broadcast', event: 'emote', payload: { emoji, name: me?.name } })
-  },
-}))
-
-// Auxílio de depuração em dev (ex.: __room.getState().sendSmoke())
-if (import.meta.env.DEV) {
-  ;(window as unknown as { __room: typeof useRoom }).__room = useRoom
-}
+    sendEmote: (emoji) => {
+      const { code, me } = get()
+      if (code) void sendEvent(code, 'emote', { name: me?.name, emoji })
+    },
+  }
+})

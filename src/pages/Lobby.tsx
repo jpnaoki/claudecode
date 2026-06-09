@@ -26,7 +26,6 @@ export default function Lobby() {
   const disconnect = useRoom((s) => s.disconnect)
   const setOnStart = useRoom((s) => s.setOnStart)
   const chooseSeat = useRoom((s) => s.chooseSeat)
-  const broadcastStart = useRoom((s) => s.start)
   const hostMatch = useMatch((s) => s.host)
 
   // conecta à sala assim que houver nome
@@ -67,7 +66,7 @@ export default function Lobby() {
       if (p) players[seat] = { id: p.id, name: p.name }
     }
     await hostMatch(code, players, me.id) // distribui e grava no Supabase
-    broadcastStart() // avisa todos pra irem pra mesa
+    navigate('/mesa') // os demais vão sozinhos quando o polling detectar a partida
   }
 
   // Sem nome ainda → pede antes de entrar na sala
