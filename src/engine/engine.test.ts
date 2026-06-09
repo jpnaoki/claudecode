@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Card, Rank, Suit } from '@/lib/types'
-import { validateSequence, isCanastra, isCanastraLimpa } from './sequence'
+import { validateSequence, validateMeld, validateSet, isCanastra, isCanastraLimpa } from './sequence'
 import { dealHand, GameState, Seat } from './state'
 import { apply } from './engine'
 
@@ -145,6 +145,31 @@ describe('coringa de naipe diferente na sequência (bug do usuário)', () => {
     const r = apply(s, { type: 'addToMeld', meldId: 'm1', cardIds: ['A-paus-0'] }, 1)
     expect(r.error).toBeUndefined()
     expect(r.state.melds.eles[0].cards.length).toBe(4)
+  })
+})
+
+describe('trincas (cartas de mesmo valor)', () => {
+  it('aceita 4-4-4 e A-A-A', () => {
+    expect(validateSet([c('4', 'copas'), c('4', 'espadas'), c('4', 'ouros')]).ok).toBe(true)
+    expect(validateSet([c('A', 'copas'), c('A', 'espadas'), c('A', 'paus')]).ok).toBe(true)
+    expect(validateMeld([c('4', 'copas'), c('4', 'espadas'), c('4', 'ouros')]).ok).toBe(true)
+  })
+  it('aceita trinca com coringa (4-4-2)', () => {
+    expect(validateSet([c('4', 'copas'), c('4', 'espadas'), c('2', 'ouros')]).ok).toBe(true)
+  })
+  it('rejeita valores misturados e o 3', () => {
+    expect(validateSet([c('4', 'copas'), c('5', 'espadas'), c('4', 'ouros')]).ok).toBe(false)
+    expect(validateSet([c('3', 'copas'), c('3', 'espadas'), c('3', 'ouros')]).ok).toBe(false)
+  })
+  it('baixa uma trinca e encaixa até a canastra', () => {
+    const s = playState('set')
+    s.hands[1] = [c('A', 'copas'), c('A', 'espadas'), c('A', 'paus'), c('A', 'ouros')]
+    const r = apply(s, { type: 'meld', cardIds: ['A-copas-0', 'A-espadas-0', 'A-paus-0'] }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.melds.eles.length).toBe(1)
+    const r2 = apply(r.state, { type: 'addToMeld', meldId: r.state.melds.eles[0].id, cardIds: ['A-ouros-0'] }, 1)
+    expect(r2.error).toBeUndefined()
+    expect(r2.state.melds.eles[0].cards.length).toBe(4)
   })
 })
 

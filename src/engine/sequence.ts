@@ -60,6 +60,36 @@ export function validateSequence(cards: Card[]): SequenceCheck {
   return { ok: false, reason: 'As cartas não formam uma sequência consecutiva do mesmo naipe.' }
 }
 
+/**
+ * Trinca: jogo de cartas de MESMO VALOR (ex.: 4-4-4, A-A-A), mínimo 3, até virar canastra.
+ * O 2 é coringa; o 3 não forma jogo (vermelho vai pro bônus, preto tranca).
+ */
+export function validateSet(cards: Card[]): SequenceCheck {
+  if (cards.length < 3) return { ok: false, reason: 'Um jogo precisa de pelo menos 3 cartas.' }
+  if (cards.some(isThree)) return { ok: false, reason: 'O 3 não forma jogo.' }
+  const naturals = cards.filter((c) => !isWild(c))
+  const wilds = cards.filter(isWild)
+  if (naturals.length === 0)
+    return { ok: false, reason: 'O jogo precisa de cartas naturais (não só coringas).' }
+  const rank = naturals[0].rank
+  if (!naturals.every((c) => c.rank === rank))
+    return { ok: false, reason: 'Num jogo de cartas iguais, todas precisam ter o mesmo valor.' }
+  if (wilds.length > naturals.length) return { ok: false, reason: 'Coringas demais para esse jogo.' }
+  return { ok: true }
+}
+
+/** Um jogo válido é uma SEQUÊNCIA (mesmo naipe) OU uma TRINCA (mesmo valor). */
+export function validateMeld(cards: Card[]): SequenceCheck {
+  const seq = validateSequence(cards)
+  if (seq.ok) return seq
+  const set = validateSet(cards)
+  if (set.ok) return set
+  return {
+    ok: false,
+    reason: 'Não forma sequência do mesmo naipe nem trinca de cartas iguais.',
+  }
+}
+
 /** Canastra = 7+ cartas. */
 export function isCanastra(cards: Card[]): boolean {
   return cards.length >= 7

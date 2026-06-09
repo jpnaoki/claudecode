@@ -1,6 +1,6 @@
 import { Card, isBlackThree, isRedThree } from '@/lib/types'
 import { scoreHand, BONUS } from '@/lib/scoring'
-import { validateSequence, isCanastra, sortSequence } from './sequence'
+import { validateMeld, isCanastra, sortSequence } from './sequence'
 import {
   GameState, Meld, Seat, Team, SEATS, teamOf, newMeldId, dealHand,
 } from './state'
@@ -24,12 +24,12 @@ export function canTakeDiscard(state: GameState, seat: Seat): boolean {
   if (!top || top.rank === '3') return false
   const team = teamOf(seat)
   for (const m of state.melds[team]) {
-    if (validateSequence([...m.cards, top]).ok) return true
+    if (validateMeld([...m.cards, top]).ok) return true
   }
   const hand = state.hands[seat]
   for (let i = 0; i < hand.length; i++) {
     for (let j = i + 1; j < hand.length; j++) {
-      if (validateSequence([top, hand[i], hand[j]]).ok) return true
+      if (validateMeld([top, hand[i], hand[j]]).ok) return true
     }
   }
   return false
@@ -135,7 +135,7 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       if (state.phase !== 'play') return fail(state, 'Compre antes de baixar.')
       const picked = pull(state.hands[actor], action.cardIds)
       if (!picked) return fail(state, 'Cartas inválidas.')
-      const check = validateSequence(picked.picked)
+      const check = validateMeld(picked.picked)
       if (!check.ok) return fail(state, check.reason ?? 'Sequência inválida.')
       const s = clone(state)
       const team = teamOf(actor)
@@ -154,7 +154,7 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       const picked = pull(state.hands[actor], action.cardIds)
       if (!picked) return fail(state, 'Cartas inválidas.')
       const combined = [...meld.cards, ...picked.picked]
-      const check = validateSequence(combined)
+      const check = validateMeld(combined)
       if (!check.ok) return fail(state, check.reason ?? 'Não encaixa nessa sequência.')
       const s = clone(state)
       s.hands[actor] = picked.rest

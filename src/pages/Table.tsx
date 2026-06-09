@@ -4,7 +4,7 @@ import { useMatch } from '@/store/matchStore'
 import { useRoom } from '@/store/roomStore'
 import { getIdentity } from '@/lib/identity'
 import { Seat, teamOf, GameState } from '@/engine/state'
-import { isCanastra, isCanastraLimpa } from '@/engine/sequence'
+import { isCanastra, isCanastraLimpa, validateMeld } from '@/engine/sequence'
 import { canTakeDiscard } from '@/engine/engine'
 import { Card, isWild, isRedThree } from '@/lib/types'
 import { sfx, unlockAudio, vibrate } from '@/lib/sfx'
@@ -158,6 +158,7 @@ export default function Table() {
   const hand = orderedHand.length === viewHand.length ? orderedHand : viewHand
   const organize = () => viewSeat != null && setOrder(sortedHandIds(state.hands[viewSeat]))
 
+  const selectedCards = ids.map((id) => byId.get(id)).filter(Boolean) as Card[]
   const selectedAllRed3 =
     ids.length > 0 && ids.every((id) => { const card = byId.get(id); return !!card && isRedThree(card) })
   const canBaixar = isMyTurn && state.phase === 'play' && (ids.length >= 3 || selectedAllRed3)
@@ -258,6 +259,7 @@ export default function Table() {
           state={state}
           team={myTeam}
           label="Nossos jogos"
+          selectedCards={selectedCards}
           onMeldClick={ids.length ? addTo : undefined}
         />
         <TeamMelds state={state} team={myTeam === 'nos' ? 'eles' : 'nos'} label="Jogos deles" />
@@ -499,11 +501,13 @@ function TeamMelds({
   state,
   team,
   label,
+  selectedCards = [],
   onMeldClick,
 }: {
   state: GameState
   team: 'nos' | 'eles'
   label: string
+  selectedCards?: Card[]
   onMeldClick?: (meldId: string) => void
 }) {
   const melds = state.melds[team]
@@ -523,27 +527,35 @@ function TeamMelds({
         <div className="py-2 text-center text-[11px] text-bone-200/30">sem jogos ainda</div>
       ) : (
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {melds.map((m) => (
-            <button
-              key={m.id}
-              onClick={onMeldClick ? () => onMeldClick(m.id) : undefined}
-              className={`flex shrink-0 items-center rounded-lg bg-black/15 p-1 ${
-                onMeldClick ? 'animate-pulse ring-2 ring-brass-300 hover:ring-brass-200' : ''
-              }`}
-            >
-              {onMeldClick && <span className="px-1 text-base font-bold text-brass-300">＋</span>}
-              {m.cards.map((c: Card, i: number) => (
-                <div key={c.id} style={{ marginLeft: i ? -26 : 0 }}>
-                  <PlayingCard card={c} size="sm" />
-                </div>
-              ))}
-              {isCanastra(m.cards) && (
-                <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${isCanastraLimpa(m.cards) ? 'bg-brass-400 text-ink' : 'bg-white/20'}`}>
-                  {isCanastraLimpa(m.cards) ? '200' : '100'}
-                </span>
-              )}
-            </button>
-          ))}
+          {melds.map((m) => {
+            const fits =
+              !!onMeldClick && selectedCards.length > 0 && validateMeld([...m.cards, ...selectedCards]).ok
+            return (
+              <button
+                key={m.id}
+                onClick={onMeldClick ? () => onMeldClick(m.id) : undefined}
+                className={`flex shrink-0 items-center rounded-lg p-1 ${
+                  fits
+                    ? 'animate-pulse bg-emerald-500/20 ring-2 ring-emerald-400'
+                    : onMeldClick
+                      ? 'bg-black/15 ring-1 ring-brass-400/40'
+                      : 'bg-black/15'
+                }`}
+              >
+                {fits && <span className="px-1 text-[9px] font-bold text-emerald-300">✓ encaixa</span>}
+                {m.cards.map((c: Card, i: number) => (
+                  <div key={c.id} style={{ marginLeft: i ? -26 : 0 }}>
+                    <PlayingCard card={c} size="sm" />
+                  </div>
+                ))}
+                {isCanastra(m.cards) && (
+                  <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${isCanastraLimpa(m.cards) ? 'bg-brass-400 text-ink' : 'bg-white/20'}`}>
+                    {isCanastraLimpa(m.cards) ? '200' : '100'}
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>
