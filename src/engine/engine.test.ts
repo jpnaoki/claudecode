@@ -146,6 +146,10 @@ describe('coringa de naipe diferente na sequência (bug do usuário)', () => {
     expect(r.error).toBeUndefined()
     expect(r.state.melds.eles[0].cards.length).toBe(4)
   })
+  it('no máximo 1 coringa por jogo', () => {
+    expect(validateSequence([c('4', 'copas'), c('5', 'copas'), c('2', 'espadas'), c('2', 'ouros')]).ok).toBe(false)
+    expect(validateSet([c('4', 'copas'), c('2', 'espadas'), c('2', 'ouros')]).ok).toBe(false)
+  })
 })
 
 describe('trincas (cartas de mesmo valor)', () => {
@@ -203,13 +207,20 @@ describe('pegar o lixo (restrição)', () => {
     s.hands[1] = [c('4', 'copas'), c('9', 'espadas'), c('A', 'paus')]
     expect(apply(s, { type: 'takeDiscard' }, 1).error).toBeTruthy()
   })
-  it('permite se o topo forma sequência com a mão', () => {
+  it('permite (baixando o topo) se forma sequência com a mão', () => {
     const s = draw(playState('lx2'))
     s.discard = [c('6', 'copas', 7)]
     s.hands[1] = [c('4', 'copas'), c('5', 'copas'), c('K', 'ouros')]
-    const r = apply(s, { type: 'takeDiscard' }, 1)
+    const r = apply(s, { type: 'takeDiscard', meldWith: ['4-copas-0', '5-copas-0'] }, 1)
     expect(r.error).toBeUndefined()
     expect(r.state.discard.length).toBe(0)
+    expect(r.state.melds.eles.length).toBe(1) // baixou o topo na hora
+  })
+  it('rejeita pegar sem baixar o topo (regra rígida)', () => {
+    const s = draw(playState('lx2b'))
+    s.discard = [c('6', 'copas', 7)]
+    s.hands[1] = [c('4', 'copas'), c('5', 'copas'), c('K', 'ouros')]
+    expect(apply(s, { type: 'takeDiscard' }, 1).error).toBeTruthy()
   })
   it('permite se o topo encaixa num jogo baixado', () => {
     const s = draw(playState('lx3'))

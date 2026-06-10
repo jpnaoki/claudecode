@@ -7,7 +7,7 @@ import {
 
 export type Action =
   | { type: 'draw' }
-  | { type: 'takeDiscard' }
+  | { type: 'takeDiscard'; meldWith?: string[] } // cartas da mão que formam jogo com o topo
   | { type: 'meld'; cardIds: string[] }
   | { type: 'addToMeld'; meldId: string; cardIds: string[] }
   | { type: 'layRedThrees'; cardIds: string[] }
@@ -95,18 +95,44 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       if (state.phase !== 'draw' || state.hasDrawn) return fail(state, 'Você já comprou nesta vez.')
       if (state.discardLocked) return fail(state, 'O lixo está trancado (3 preto no topo).')
       if (state.discard.length === 0) return fail(state, 'O lixo está vazio.')
-      if (!canTakeDiscard(state, actor))
-        return fail(state, 'Só dá pra pegar o lixo se a carta do topo formar um jogo com sua mão ou encaixar num jogo baixado.')
+      const top = state.discard[state.discard.length - 1]
+      if (top.rank === '3') return fail(state, 'A carta do topo (3) não deixa pegar o lixo.')
+      const team = teamOf(actor)
+      const meldWith = action.meldWith ?? []
+      const withCards = meldWith
+        .map((id) => state.hands[actor].find((c) => c.id === id))
+        .filter((c): c is Card => !!c)
+      // tem que BAIXAR o topo na hora: novo jogo com cartas da mão, OU encaixe num jogo existente
+      const canNew =
+        meldWith.length > 0 && withCards.length === meldWith.length && validateMeld([top, ...withCards]).ok
+      const existing = canNew ? null : state.melds[team].find((m) => validateMeld([...m.cards, top]).ok)
+      if (!canNew && !existing)
+        return fail(
+          state,
+          'Pra pegar o lixo, BAIXE o topo na hora: selecione as cartas da mão que formam jogo com ele, ou tenha um jogo onde ele encaixe.',
+        )
+
       const s = clone(state)
       const taken = s.discard.length
-      const top = s.discard[taken - 1]
       s.hands[actor].push(...s.discard)
       s.discard = []
       s.lastDrawn = null
       s.hasDrawn = true
       s.phase = 'play'
-      s.log.push(`${seatName(actor)} pegou o lixo (topo ${top.rank}${top.suit[0]} + ${taken - 1} cartas).`)
-      return ok(s)
+
+      if (canNew) {
+        const pick = pull(s.hands[actor], [top.id, ...meldWith])!
+        s.hands[actor] = pick.rest
+        s.melds[team].push({ id: newMeldId(), cards: sortSequence(pick.picked) })
+        s.log.push(`${seatName(actor)} pegou o lixo (${taken} cartas) e baixou o topo ${top.rank}${top.suit[0]}.`)
+      } else {
+        const pick = pull(s.hands[actor], [top.id])!
+        s.hands[actor] = pick.rest
+        const m = s.melds[team].find((x) => x.id === existing!.id)!
+        m.cards = sortSequence([...m.cards, top])
+        s.log.push(`${seatName(actor)} pegou o lixo (${taken} cartas) e encaixou o topo ${top.rank}${top.suit[0]}.`)
+      }
+      return ok(afterShrink(s, actor))
     }
 
     case 'layRedThrees': {

@@ -291,6 +291,11 @@ export default function Table() {
         </div>
       )}
 
+      {state.phase === 'draw' && podePegarLixo && (
+        <div className="mt-1 text-center text-[10px] text-brass-200">
+          Pegar o lixo: selecione as cartas que fazem jogo com o topo (ou deixe vazio se ele encaixa num jogo seu)
+        </div>
+      )}
       {/* ações */}
       <div className="mt-2 flex gap-2">
         {state.phase === 'draw' ? (
@@ -302,7 +307,7 @@ export default function Table() {
               variant="primary"
               className="flex-1 !px-2"
               disabled={!podePegarLixo}
-              onClick={() => { sfx.play(); act({ type: 'takeDiscard' }) }}
+              onClick={() => { sfx.play(); act({ type: 'takeDiscard', meldWith: ids }); setSelected(new Set()) }}
             >
               Pegar lixo
             </Button>

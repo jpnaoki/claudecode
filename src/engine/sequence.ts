@@ -36,8 +36,7 @@ export function validateSequence(cards: Card[]): SequenceCheck {
   const wilds = cards.filter(isWild)
   if (naturals.length === 0)
     return { ok: false, reason: 'A sequência precisa de cartas naturais (não só coringas).' }
-  if (wilds.length > naturals.length)
-    return { ok: false, reason: 'Coringas demais para essa sequência.' }
+  if (wilds.length > 1) return { ok: false, reason: 'No máximo 1 coringa por jogo.' }
 
   const suit = naturals[0].suit
   if (!naturals.every((c) => c.suit === suit))
@@ -74,7 +73,7 @@ export function validateSet(cards: Card[]): SequenceCheck {
   const rank = naturals[0].rank
   if (!naturals.every((c) => c.rank === rank))
     return { ok: false, reason: 'Num jogo de cartas iguais, todas precisam ter o mesmo valor.' }
-  if (wilds.length > naturals.length) return { ok: false, reason: 'Coringas demais para esse jogo.' }
+  if (wilds.length > 1) return { ok: false, reason: 'No máximo 1 coringa por jogo.' }
   return { ok: true }
 }
 
