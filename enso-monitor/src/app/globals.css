@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background-color: theme("colors.papel");
+  color: theme("colors.tinta.900");
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Números tabulares: colunas de temperatura têm de alinhar na vertical. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Rótulo pequeno, caixa alta, muito espaçado — o "carimbo" do layout. */
+.rotulo {
+  @apply text-[10px] font-medium uppercase tracking-rotulo text-tinta-500;
+}
