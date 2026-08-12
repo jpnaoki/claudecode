@@ -1,4 +1,5 @@
 import type { Proveniencia } from "@/lib/enso/tipos";
+import type { Atualidade } from "@/lib/enso/atualidade";
 import { descreverIdade, formatarColeta, formatarDataObs } from "@/lib/enso/formatar";
 
 /**
@@ -14,7 +15,7 @@ function ehData(observadoEm: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(observadoEm);
 }
 
-export function SeloProveniencia({ p }: { p: Proveniencia }) {
+export function SeloProveniencia({ p, atualidade }: { p: Proveniencia; atualidade?: Atualidade }) {
   const observado = ehData(p.observadoEm) ? formatarDataObs(p.observadoEm) : p.observadoEm;
 
   return (
@@ -28,7 +29,30 @@ export function SeloProveniencia({ p }: { p: Proveniencia }) {
             Cache — origem indisponível
           </span>
         )}
+        {atualidade && atualidade.situacao !== "NORMAL" && (
+          <span
+            className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-rotulo ring-1 ring-inset ${
+              atualidade.situacao === "PARADA"
+                ? "bg-red-50 text-red-800 ring-red-300"
+                : "bg-amber-50 text-amber-800 ring-amber-300"
+            }`}
+          >
+            {atualidade.situacao === "PARADA" ? "Fonte parada" : "Fonte atrasada"}
+          </span>
+        )}
       </div>
+
+      {atualidade?.nota && (
+        <p
+          className={`mt-2 rounded-sm p-2 text-[11px] leading-relaxed ${
+            atualidade.situacao === "PARADA"
+              ? "bg-red-50 text-red-900"
+              : "bg-amber-50 text-amber-900"
+          }`}
+        >
+          {atualidade.nota}
+        </p>
+      )}
 
       <dl className="mt-2 space-y-0.5 text-[11px] leading-relaxed text-tinta-500">
         <div className="flex gap-1.5">

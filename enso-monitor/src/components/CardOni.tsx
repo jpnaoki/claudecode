@@ -96,7 +96,7 @@ export function CardOni({ oni, alerta }: { oni: BlocoOni; alerta: AlertaEnso | n
         </div>
       )}
 
-      <SeloProveniencia p={oni.proveniencia} />
+      <SeloProveniencia p={oni.proveniencia} atualidade={oni.atualidade} />
     </section>
   );
 }

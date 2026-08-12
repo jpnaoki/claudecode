@@ -74,7 +74,7 @@ export function CardNino34({ semanal }: { semanal: BlocoSemanal }) {
         do ONI, ao lado.
       </p>
 
-      <SeloProveniencia p={semanal.proveniencia} />
+      <SeloProveniencia p={semanal.proveniencia} atualidade={semanal.atualidade} />
     </section>
   );
 }

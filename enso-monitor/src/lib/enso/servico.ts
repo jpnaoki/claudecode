@@ -3,6 +3,8 @@ import { parsearSemanal } from "./parse-semanal";
 import { parsearOni, parsearRoni } from "./parse-oni";
 import { classificarOni, contarEstacoesConsecutivas } from "./classificar";
 import { extrairAlerta } from "./alerta";
+import { avaliarAtualidadeOni, avaliarAtualidadeSemanal } from "./atualidade";
+import { anoDoEventoEmCurso, compararNaMesmaEstacao, montarAnalogos } from "./analogos";
 import { montarLeitura } from "./narrativa";
 import type { TextoBruto } from "./fontes";
 import type {
@@ -42,7 +44,7 @@ function proveniencia(
  * porque as fontes têm cadências e períodos-base diferentes — misturar os dois
  * carimbos seria enganoso.
  */
-export async function obterEnso(): Promise<RespostaEnso> {
+export async function obterEnso(agora = new Date()): Promise<RespostaEnso> {
   // Semanal e ONI são obrigatórios; RONI e boletim são contexto opcional e não
   // podem derrubar a página se falharem.
   const [brutoSemanal, brutoOni] = await Promise.all([
@@ -65,6 +67,7 @@ export async function obterEnso(): Promise<RespostaEnso> {
     atual,
     referencia4Semanas,
     deltaNino34,
+    atualidade: avaliarAtualidadeSemanal(atual.data, agora),
     proveniencia: proveniencia(FONTES.semanal, atual.data, brutoSemanal),
   };
 
@@ -93,6 +96,7 @@ export async function obterEnso(): Promise<RespostaEnso> {
     estacoesConsecutivas,
     criterioAtendido: estacoesConsecutivas >= 5,
     roni,
+    atualidade: avaliarAtualidadeOni(atualOni.estacao, atualOni.ano, agora),
     proveniencia: proveniencia(FONTES.oni, `${atualOni.estacao} ${atualOni.ano}`, brutoOni),
   };
 
@@ -118,11 +122,17 @@ export async function obterEnso(): Promise<RespostaEnso> {
     alerta = null;
   }
 
+  // Análogos usam a série COMPLETA do ONI (vai a 1950), não o recorte de 24
+  // estações que a UI desenha.
+  const analogos = montarAnalogos(serieOni, anoDoEventoEmCurso(atualOni));
+
   return {
     semanal,
     oni,
     alerta,
+    analogos,
+    comparacao: compararNaMesmaEstacao(analogos),
     leitura: montarLeitura(semanal, oni, alerta?.status ?? null),
-    geradoEm: new Date().toISOString(),
+    geradoEm: agora.toISOString(),
   };
 }

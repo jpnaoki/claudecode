@@ -2,6 +2,7 @@ import { obterEnso } from "@/lib/enso/servico";
 import { formatarColeta } from "@/lib/enso/formatar";
 import { CardNino34 } from "@/components/CardNino34";
 import { CardOni } from "@/components/CardOni";
+import { CardAnalogos } from "@/components/CardAnalogos";
 import { GradeRegioes } from "@/components/GradeRegioes";
 import { GraficoAnomalia } from "@/components/GraficoAnomalia";
 
@@ -51,6 +52,16 @@ export default async function Pagina() {
         </p>
       </header>
 
+      {(semanal.atualidade.situacao === "PARADA" || oni.atualidade.situacao === "PARADA") && (
+        <div className="mb-8 rounded-sm border border-red-300 bg-red-50 p-4 text-sm leading-relaxed text-red-900">
+          <strong className="font-medium">A fonte parou de ser atualizada.</strong> Os números
+          abaixo são reais e vieram da NOAA, mas a observação mais recente está velha demais
+          para descrever o estado atual do oceano. Verifique se a CPC migrou de arquivo — foi
+          exatamente assim que o <code>wksst8110.for</code> saiu de circulação, continuando a
+          responder normalmente com dado congelado.
+        </div>
+      )}
+
       {emCache && (
         <div className="mb-8 rounded-sm border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
           <strong className="font-medium">Origem indisponível.</strong> A NOAA não respondeu
@@ -98,6 +109,10 @@ export default async function Pagina() {
         <h2 className="rotulo mb-3">As quatro regiões — semana de observação mais recente</h2>
         <GradeRegioes semanal={semanal} />
       </section>
+
+      <div className="mt-5">
+        <CardAnalogos analogos={dados.analogos} comparacao={dados.comparacao} />
+      </div>
 
       <footer className="mt-12 border-t border-tinta-100 pt-6 text-[11px] leading-relaxed text-tinta-500">
         <p>

@@ -106,6 +106,10 @@ export interface Proveniencia {
   cacheDe: string | null;
 }
 
+// Importações só de tipo — apagadas na compilação, então não criam ciclo em runtime.
+import type { Atualidade } from "./atualidade";
+import type { Analogo, ComparacaoNaEstacao } from "./analogos";
+
 export interface BlocoSemanal {
   /** Série completa, ordem cronológica crescente. */
   serie: SemanaObservada[];
@@ -114,6 +118,8 @@ export interface BlocoSemanal {
   referencia4Semanas: SemanaObservada | null;
   /** Variação da anomalia da Niño 3.4 vs. `referencia4Semanas`. */
   deltaNino34: number | null;
+  /** Idade do dado na origem — pega arquivo congelado, que o fetch não pega. */
+  atualidade: Atualidade;
   proveniencia: Proveniencia;
 }
 
@@ -127,6 +133,7 @@ export interface BlocoOni {
   criterioAtendido: boolean;
   /** RONI da mesma estação, quando disponível (anomalia relativa aos trópicos). */
   roni: number | null;
+  atualidade: Atualidade;
   proveniencia: Proveniencia;
 }
 
@@ -139,6 +146,10 @@ export interface RespostaEnso {
   semanal: BlocoSemanal;
   oni: BlocoOni;
   alerta: AlertaEnso | null;
+  /** Evento em curso e os El Niños fortes anteriores, alinhados por estação. */
+  analogos: Analogo[];
+  /** Onde o evento em curso está em relação aos anteriores na mesma estação. */
+  comparacao: ComparacaoNaEstacao | null;
   leitura: string[];
   geradoEm: string;
 }
