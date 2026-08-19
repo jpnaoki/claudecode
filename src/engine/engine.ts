@@ -217,11 +217,16 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
 
       if (s.hands[actor].length === 0) {
         if (podePegarMorto) {
-          // pega o morto e continua jogando
+          // Esvaziou DESCARTANDO: pega o morto mas PERDE a vez.
+          // (só continua jogando quem esvazia baixando tudo — ver afterShrink)
           s.hands[actor] = s.mortos.pop()!
           s.tookMorto[team] = true
-          s.log.push(`${seatName(s, actor)} esvaziou a mão e pegou o morto.`)
-          return ok(s) // turno continua
+          s.log.push(`${seatName(s, actor)} descartou a última e pegou o morto (passa a vez).`)
+          s.turn = ((actor + 1) % 4) as Seat
+          s.phase = 'draw'
+          s.hasDrawn = false
+          s.lastDrawn = null
+          return ok(s)
         }
         // bate!
         s.log.push(`${seatName(s, actor)} bateu! 🎉`)
@@ -253,14 +258,17 @@ function refillStock(s: GameState): boolean {
   return true
 }
 
-/** Quando a mão de quem jogou esvazia ao BAIXAR (não no descarte): pega morto ou bate. */
+/**
+ * Esvaziou a mão BAIXANDO tudo (sem descartar): pega o morto e SEGUE JOGANDO.
+ * É a diferença pro descarte — lá a vez passa. Quem baixa tudo é premiado.
+ */
 function afterShrink(s: GameState, actor: Seat): GameState {
   const team = teamOf(actor)
   if (s.hands[actor].length > 0) return s
   if (!s.tookMorto[team] && s.mortos.length > 0) {
     s.hands[actor] = s.mortos.pop()!
     s.tookMorto[team] = true
-    s.log.push(`${seatName(s, actor)} baixou tudo e pegou o morto.`)
+    s.log.push(`${seatName(s, actor)} baixou tudo e pegou o morto — continua jogando! 🔥`)
     return s
   }
   if (hasCanastra(s, team)) {

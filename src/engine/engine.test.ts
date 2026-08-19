@@ -119,6 +119,30 @@ describe('fluxo de turno', () => {
   })
 })
 
+describe('pegar o morto: descartando PERDE a vez, baixando tudo CONTINUA', () => {
+  it('esvaziou DESCARTANDO a última: pega o morto e passa a vez', () => {
+    const s = playState('morto-descarte') // turn = 1, phase = play
+    s.hands[1] = [c('K', 'ouros', 5)] // só uma carta: vai descartar e esvaziar
+    const r = apply(s, { type: 'discard', cardId: 'K-ouros-5' }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.tookMorto.eles).toBe(true)
+    expect(r.state.hands[1].length).toBe(11) // recebeu o morto
+    expect(r.state.turn).toBe(2) // PERDEU a vez
+    expect(r.state.phase).toBe('draw')
+  })
+
+  it('esvaziou BAIXANDO tudo: pega o morto e continua jogando', () => {
+    const s = playState('morto-baixando')
+    s.hands[1] = [c('4', 'copas', 5), c('5', 'copas', 5), c('6', 'copas', 5)]
+    const r = apply(s, { type: 'meld', cardIds: ['4-copas-5', '5-copas-5', '6-copas-5'] }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.tookMorto.eles).toBe(true)
+    expect(r.state.hands[1].length).toBe(11) // recebeu o morto
+    expect(r.state.turn).toBe(1) // CONTINUA na vez dele
+    expect(r.state.phase).toBe('play')
+  })
+})
+
 describe('o morto também é jogo: vira monte quando as compras acabam', () => {
   const semMonte = (mortos: number) => {
     const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed: 'morto' })
