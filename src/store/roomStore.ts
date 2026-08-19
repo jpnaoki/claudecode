@@ -9,6 +9,7 @@ import {
   latestEventId,
   fetchGame,
   healthCheck,
+  HealthReason,
 } from '@/engine/sync'
 import { supabase } from '@/lib/supabase'
 
@@ -57,6 +58,7 @@ interface RoomStore {
   mySeat: number | null
   lastStatus: string | null
   setupMissing: string[] // tabelas ausentes quando status === 'setup-needed'
+  setupReason: HealthReason | null // hibernando/fora do ar x tabelas faltando
   onStart?: () => void
 
   setOnStart: (fn?: () => void) => void
@@ -77,6 +79,15 @@ export const useRoom = create<RoomStore>((set, get) => {
       () => set((st) => ({ reactions: st.reactions.filter((x) => x.id !== reaction.id) })),
       4000,
     )
+  }
+
+  /**
+   * Bate o ponto e SURFACE o erro. Sem isto, um cenário sorrateiro passa batido:
+   * leitura funciona, escrita é negada → a sala fica eternamente vazia dizendo "ao vivo".
+   */
+  const beat = async (code: string, me: Identity) => {
+    const err = await heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal })
+    if (err) set({ status: 'error', lastStatus: `não consegui te registrar na sala: ${err}` })
   }
 
   const pollPlayers = async (code: string, me: Identity) => {
@@ -120,6 +131,7 @@ export const useRoom = create<RoomStore>((set, get) => {
     mySeat: null,
     lastStatus: null,
     setupMissing: [],
+    setupReason: null,
 
     setOnStart: (fn) => set({ onStart: fn }),
 
@@ -142,22 +154,27 @@ export const useRoom = create<RoomStore>((set, get) => {
         set({ status: 'no-backend', code, me, lastStatus: 'sem backend (.env)' })
         return
       }
-      set({ code, me, status: 'connecting', players: [], mySeat: null, lastStatus: null, setupMissing: [] })
+      set({ code, me, status: 'connecting', players: [], mySeat: null, lastStatus: null, setupMissing: [], setupReason: null })
 
       // Antes de tudo: as tabelas existem? Sem isto, cada um fica sozinho na sala.
       void healthCheck().then((h) => {
         // ignora se o usuário já saiu/trocou de sala nesse meio-tempo
         if (get().code !== code) return
         if (!h.ok) {
-          set({ status: 'setup-needed', setupMissing: h.missing, lastStatus: h.message ?? 'tabelas ausentes' })
+          set({
+            status: 'setup-needed',
+            setupMissing: h.missing,
+            setupReason: h.reason ?? 'offline',
+            lastStatus: h.message ?? 'backend indisponível',
+          })
           return
         }
         // saudável → começa a bater ponto e a fazer polling
-        void heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal })
+        void beat(code, me)
         void latestEventId(code).then((id) => (eventCursor = id))
         void pollPlayers(code, me)
 
-        timers.push(setInterval(() => heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal }), 4000))
+        timers.push(setInterval(() => beat(code, me), 4000))
         timers.push(setInterval(() => pollPlayers(code, me), 2500))
         timers.push(setInterval(() => pollEvents(code), 2000))
         timers.push(setInterval(() => pollGameStart(code), 2500))
@@ -180,7 +197,7 @@ export const useRoom = create<RoomStore>((set, get) => {
       } catch {
         /* ignore */
       }
-      set({ code: null, me: null, status: 'idle', players: [], reactions: [], mySeat: null, setupMissing: [] })
+      set({ code: null, me: null, status: 'idle', players: [], reactions: [], mySeat: null, setupMissing: [], setupReason: null })
     },
 
     chooseSeat: (seat) => {
@@ -188,7 +205,8 @@ export const useRoom = create<RoomStore>((set, get) => {
       mySeatLocal = seat
       set({ mySeat: seat })
       if (code && me) {
-        void heartbeat(code, { id: me.id, name: me.name, seat }).then(() => pollPlayers(code, me))
+        // mySeatLocal já vale `seat`, então o beat registra o assento escolhido
+        void beat(code, me).then(() => pollPlayers(code, me))
       }
     },
 

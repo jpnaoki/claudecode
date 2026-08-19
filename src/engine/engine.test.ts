@@ -3,6 +3,7 @@ import { Card, Rank, Suit } from '@/lib/types'
 import { validateSequence, validateMeld, validateSet, isCanastra, isCanastraLimpa } from './sequence'
 import { dealHand, GameState, Seat } from './state'
 import { apply } from './engine'
+import { scoreHand } from '@/lib/scoring'
 
 // helper p/ criar cartas
 const c = (rank: Rank, suit: Suit, n = 0): Card => ({ id: `${rank}-${suit}-${n}`, rank, suit })
@@ -99,6 +100,39 @@ describe('fluxo de turno', () => {
     const after = apply(drawn, { type: 'discard', cardId: '3-espadas-9' }, 1)
     expect(after.state.discardLocked).toBe(true)
   })
+
+  // Regra da casa: o coringa também tranca — de QUALQUER naipe.
+  it('descartar coringa (2) tranca o lixo, em qualquer naipe', () => {
+    for (const suit of ['copas', 'ouros', 'espadas', 'paus'] as Suit[]) {
+      const drawn = apply(base(), { type: 'draw' }, 1).state
+      drawn.hands[1].unshift(c('2', suit, 7))
+      const after = apply(drawn, { type: 'discard', cardId: `2-${suit}-7` }, 1)
+      expect(after.state.discardLocked, `2 de ${suit} não trancou`).toBe(true)
+    }
+  })
+
+  it('carta comum NÃO tranca o lixo', () => {
+    const drawn = apply(base(), { type: 'draw' }, 1).state
+    drawn.hands[1].unshift(c('9', 'ouros', 7))
+    const after = apply(drawn, { type: 'discard', cardId: '9-ouros-7' }, 1)
+    expect(after.state.discardLocked).toBe(false)
+  })
+})
+
+describe('penalidade do 3 preto (-100 por CADA)', () => {
+  const semNada = {
+    melds: [],
+    redThrees: 0,
+    tookMorto: true,
+    hasBatted: false,
+    cardsInHand: [],
+  }
+  it('cobra -100 por cada 3 preto que sobrou na mão', () => {
+    expect(scoreHand({ ...semNada, blackThreesInHand: 0 })).toBe(0)
+    expect(scoreHand({ ...semNada, blackThreesInHand: 1 })).toBe(-100)
+    expect(scoreHand({ ...semNada, blackThreesInHand: 2 })).toBe(-200)
+    expect(scoreHand({ ...semNada, blackThreesInHand: 4 })).toBe(-400)
+  })
 })
 
 describe('baixar sequência', () => {
@@ -164,6 +198,26 @@ describe('trincas (cartas de mesmo valor)', () => {
   it('rejeita valores misturados e o 3', () => {
     expect(validateSet([c('4', 'copas'), c('5', 'espadas'), c('4', 'ouros')]).ok).toBe(false)
     expect(validateSet([c('3', 'copas'), c('3', 'espadas'), c('3', 'ouros')]).ok).toBe(false)
+  })
+
+  // REGRA DA CASA: lavadeira SÓ com 4 e Ás. Um bot chegou a baixar 3 reis — nunca mais.
+  it('REJEITA lavadeira de qualquer outro valor (K, Q, J, 10, 7…)', () => {
+    const outros: Rank[] = ['K', 'Q', 'J', '10', '9', '8', '7', '6', '5']
+    for (const r of outros) {
+      const trinca = [c(r, 'copas'), c(r, 'espadas'), c(r, 'ouros')]
+      expect(validateSet(trinca).ok, `validateSet aceitou ${r}-${r}-${r}`).toBe(false)
+      expect(validateMeld(trinca).ok, `validateMeld aceitou ${r}-${r}-${r}`).toBe(false)
+      // nem com coringa
+      expect(validateMeld([c(r, 'copas'), c(r, 'espadas'), c('2', 'ouros')]).ok).toBe(false)
+    }
+  })
+
+  it('o motor recusa baixar 3 reis (o bug relatado)', () => {
+    const s = playState('set')
+    s.hands[1] = [c('K', 'copas'), c('K', 'espadas'), c('K', 'ouros'), c('7', 'paus')]
+    const r = apply(s, { type: 'meld', cardIds: ['K-copas-0', 'K-espadas-0', 'K-ouros-0'] }, 1)
+    expect(r.error).toBeTruthy()
+    expect(r.state.melds.eles.length).toBe(0)
   })
   it('baixa uma trinca e encaixa até a canastra', () => {
     const s = playState('set')

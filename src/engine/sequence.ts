@@ -60,9 +60,13 @@ export function validateSequence(cards: Card[]): SequenceCheck {
 }
 
 /**
- * Trinca: jogo de cartas de MESMO VALOR (ex.: 4-4-4, A-A-A), mínimo 3, até virar canastra.
+ * LAVADEIRA: jogo de cartas de mesmo valor, mínimo 3, até virar canastra.
+ * REGRA DA CASA: só vale com **4** e **Ás** — nunca com outro valor.
+ * (K-K-K, 7-7-7 etc. NÃO formam jogo; essas cartas só entram em sequência.)
  * O 2 é coringa; o 3 não forma jogo (vermelho vai pro bônus, preto tranca).
  */
+export const LAVADEIRA_RANKS: Rank[] = ['4', 'A']
+
 export function validateSet(cards: Card[]): SequenceCheck {
   if (cards.length < 3) return { ok: false, reason: 'Um jogo precisa de pelo menos 3 cartas.' }
   if (cards.some(isThree)) return { ok: false, reason: 'O 3 não forma jogo.' }
@@ -73,6 +77,8 @@ export function validateSet(cards: Card[]): SequenceCheck {
   const rank = naturals[0].rank
   if (!naturals.every((c) => c.rank === rank))
     return { ok: false, reason: 'Num jogo de cartas iguais, todas precisam ter o mesmo valor.' }
+  if (!LAVADEIRA_RANKS.includes(rank))
+    return { ok: false, reason: `Lavadeira só vale com 4 ou Ás — ${rank} só entra em sequência.` }
   if (wilds.length > 1) return { ok: false, reason: 'No máximo 1 coringa por jogo.' }
   return { ok: true }
 }

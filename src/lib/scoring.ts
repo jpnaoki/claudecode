@@ -11,7 +11,7 @@ export const BONUS = {
   CANASTRA_SUJA: 100, // 7+ cartas, com coringa
   BATER: 100, // encerrar a mão (exige morto pego + >=1 canastra)
   TRES_VERMELHO: 100, // cada 3 vermelho baixado
-  TRES_PRETO_NA_MAO: -100, // penalidade ao bater com 3 preto na mão
+  TRES_PRETO_NA_MAO: -100, // penalidade por CADA 3 preto que sobrar na mão no fim da mão
   MORTO_NAO_PEGO: -100, // dupla que não pegou o morto
 } as const
 
@@ -38,7 +38,7 @@ export function cardsPoints(cards: Card[]): number {
 export interface HandScoreInput {
   melds: Meld[] // sequências baixadas pela dupla
   redThrees: number // qtd de 3 vermelhos baixados
-  battedWithBlackThree: boolean // bateu com 3 preto na mão?
+  blackThreesInHand: number // qtd de 3 pretos que sobraram na mão: -100 CADA
   tookMorto: boolean // a dupla pegou o morto?
   hasBatted: boolean // a dupla bateu?
   cardsInHand: Card[] // cartas que sobraram na mão (contam negativo)
@@ -55,7 +55,7 @@ export function scoreHand(input: HandScoreInput): number {
   }
   total += input.redThrees * BONUS.TRES_VERMELHO
   if (input.hasBatted) total += BONUS.BATER
-  if (input.battedWithBlackThree) total += BONUS.TRES_PRETO_NA_MAO
+  total += input.blackThreesInHand * BONUS.TRES_PRETO_NA_MAO // -100 por CADA
   if (!input.tookMorto) total += BONUS.MORTO_NAO_PEGO
   total -= cardsPoints(input.cardsInHand)
   return total

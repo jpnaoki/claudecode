@@ -1,4 +1,4 @@
-import { Card, isBlackThree, isRedThree } from '@/lib/types'
+import { Card, isBlackThree, isRedThree, isWild } from '@/lib/types'
 import { scoreHand, BONUS } from '@/lib/scoring'
 import { validateMeld, isCanastra, sortSequence } from './sequence'
 import {
@@ -93,7 +93,8 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
 
     case 'takeDiscard': {
       if (state.phase !== 'draw' || state.hasDrawn) return fail(state, 'Você já comprou nesta vez.')
-      if (state.discardLocked) return fail(state, 'O lixo está trancado (3 preto no topo).')
+      if (state.discardLocked)
+        return fail(state, 'O lixo está trancado (3 preto ou coringa no topo).')
       if (state.discard.length === 0) return fail(state, 'O lixo está vazio.')
       const top = state.discard[state.discard.length - 1]
       if (top.rank === '3') return fail(state, 'A carta do topo (3) não deixa pegar o lixo.')
@@ -206,7 +207,8 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       const s = clone(state)
       s.hands[actor].splice(i, 1)
       s.discard.push(card)
-      s.discardLocked = isBlackThree(card)
+      // Trancam a mesa pra compra: 3 preto E coringa (2, de qualquer naipe).
+      s.discardLocked = isBlackThree(card) || isWild(card)
 
       if (s.hands[actor].length === 0) {
         if (!s.tookMorto[team]) {
@@ -261,7 +263,7 @@ function endHand(s: GameState, batedor?: Team): ApplyResult {
     const delta = scoreHand({
       melds: s.melds[t].map((m) => ({ cards: m.cards })),
       redThrees: s.redThrees[t].length,
-      battedWithBlackThree: blackThrees > 0,
+      blackThreesInHand: blackThrees, // -100 por CADA 3 preto que sobrou
       tookMorto: s.tookMorto[t],
       hasBatted: batedor === t,
       cardsInHand: handCards.filter((c) => !isBlackThree(c)),

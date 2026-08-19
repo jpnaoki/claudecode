@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMatch } from '@/store/matchStore'
 import { useRoom } from '@/store/roomStore'
@@ -225,11 +225,19 @@ export default function Table() {
   }
 
   return (
-    <div className="mx-auto flex min-h-full max-w-md flex-col px-3 pb-3">
+    /* Mesa de tela ÚNICA: trava na altura da viewport (dvh cobre a barra do
+       navegador no celular). Só a área de jogos rola — a página nunca. */
+    <div
+      className="mx-auto flex h-[100dvh] max-h-[100dvh] w-full max-w-md flex-col overflow-hidden px-3"
+      style={{
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
+      }}
+    >
       <SocialLayer />
 
       {/* topo */}
-      <header className="flex items-center justify-between py-2">
+      <header className="flex shrink-0 items-center justify-between py-1.5">
         <button onClick={leave} className="text-xs uppercase tracking-widest text-brass-400/70">
           ← sair
         </button>
@@ -246,16 +254,16 @@ export default function Table() {
       <TurnBanner state={state} isMyTurn={isMyTurn} local={local} nudge={nudge} />
 
       {/* parceiro (topo) */}
-      <div className="flex justify-center py-1">
+      <div className="flex shrink-0 justify-center py-0.5">
         <SeatChip state={state} seat={top} />
       </div>
 
       {/* meio: oponentes + centro */}
-      <div className="my-2 grid grid-cols-[auto_1fr_auto] items-center gap-1">
+      <div className="my-1 grid shrink-0 grid-cols-[auto_1fr_auto] items-center gap-1">
         <SeatChip state={state} seat={left} vertical />
 
         <div
-          className="flex items-center justify-center gap-3 rounded-[1.4rem] border border-brass-500/25 py-4"
+          className="flex items-center justify-center gap-3 rounded-[1.4rem] border border-brass-500/25 py-2"
           style={{
             background: 'radial-gradient(120% 140% at 50% 0%, rgba(20,120,78,.45), rgba(0,0,0,.28))',
             boxShadow: 'inset 0 2px 10px rgba(0,0,0,.45)',
@@ -310,11 +318,12 @@ export default function Table() {
 
       {/* jogos das duplas */}
       {ids.length > 0 && state.phase === 'play' && (
-        <div className="mb-1 rounded-lg bg-brass-500/10 py-1 text-center text-[10px] text-brass-200">
+        <div className="mb-1 shrink-0 rounded-lg bg-brass-500/10 py-1 text-center text-[10px] text-brass-200">
           Toque num jogo abaixo pra <b>encaixar</b> · ou <b>Baixar</b> pra nova sequência
         </div>
       )}
-      <div className="space-y-2">
+      {/* única região que rola (quando há muitos jogos) — o resto fica fixo */}
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
         <TeamMelds
           state={state}
           team={myTeam}
@@ -325,12 +334,10 @@ export default function Table() {
         <TeamMelds state={state} team={myTeam === 'nos' ? 'eles' : 'nos'} label="Jogos deles" />
       </div>
 
-      <div className="flex-1" />
-
       {/* minha mão */}
       {viewSeat != null && (
-        <div className="mt-2">
-          <div className="mb-1 flex items-center justify-between px-1">
+        <div className="mt-1 shrink-0">
+          <div className="mb-0.5 flex items-center justify-between px-1">
             <span className="text-[10px] uppercase tracking-widest text-bone-200/50">
               {local ? `Mão de ${state.players[viewSeat]?.name ?? viewSeat}` : 'Sua mão'} ·{' '}
               {state.hands[viewSeat].length}
@@ -352,12 +359,12 @@ export default function Table() {
       )}
 
       {state.phase === 'draw' && podePegarLixo && (
-        <div className="mt-1 text-center text-[10px] text-brass-200">
+        <div className="mt-0.5 shrink-0 text-center text-[10px] text-brass-200">
           Pegar o lixo: selecione as cartas que fazem jogo com o topo (ou deixe vazio se ele encaixa num jogo seu)
         </div>
       )}
       {/* ações */}
-      <div className="mt-2 flex gap-2">
+      <div className="mt-1.5 flex shrink-0 gap-2">
         {state.phase === 'draw' ? (
           <>
             <Button variant="gold" className="flex-1 !px-2" disabled={!isMyTurn || state.hasDrawn} onClick={() => { sfx.play(); act({ type: 'draw' }) }}>
@@ -385,7 +392,7 @@ export default function Table() {
       </div>
 
       {/* reações */}
-      <div className="mt-2 flex justify-center">
+      <div className="mt-1 flex shrink-0 justify-center">
         <EmoteBar compact />
       </div>
 
@@ -425,6 +432,34 @@ function Hand({
   const start = useRef({ x: 0, y: 0 })
   const [activeDrag, setActiveDrag] = useState<string | null>(null)
 
+  /**
+   * A mão precisa caber na tela SEMPRE — inclusive com 22 cartas depois do morto.
+   * Até 13 cartas: uma fileira. Acima disso: duas, senão a sobreposição fica tão
+   * grande que não dá pra ler nem tocar. A sobreposição é medida da largura real.
+   */
+  const rowsCount = cards.length > 13 ? 2 : 1
+  const perRow = Math.ceil(cards.length / rowsCount) || 1
+  const rows: Card[][] = []
+  for (let i = 0; i < cards.length; i += perRow) rows.push(cards.slice(i, i + perRow))
+
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [overlap, setOverlap] = useState(14)
+  useLayoutEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const CARD = 64 // largura da carta md (w-16)
+    const compute = () => {
+      const w = el.clientWidth
+      if (perRow <= 1 || w === 0) return setOverlap(0)
+      const advance = (w - CARD) / (perRow - 1) // quanto cada carta avança
+      setOverlap(Math.min(46, Math.max(4, Math.round(CARD - advance))))
+    }
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [perRow])
+
   const down = (e: React.PointerEvent, id: string) => {
     dragId.current = id
     moved.current = false
@@ -457,26 +492,32 @@ function Hand({
   }
 
   return (
-    <div className="flex flex-wrap justify-center gap-y-2 pt-2" onPointerMove={move}>
-      {cards.map((c, i) => (
-        <div
-          key={c.id}
-          data-card-id={c.id}
-          onPointerDown={(e) => down(e, c.id)}
-          onPointerUp={() => up(c.id)}
-          onPointerCancel={() => up(c.id)}
-          style={{ marginLeft: i ? -14 : 0, touchAction: 'none' }}
-          className={`cursor-grab transition-transform ${
-            activeDrag === c.id ? 'z-20 -translate-y-3 scale-105 opacity-80' : ''
-          } ${highlightId === c.id ? 'animate-deal z-10' : ''}`}
-        >
-          <div
-            className={
-              highlightId === c.id ? 'rounded-xl shadow-glow ring-2 ring-brass-300 ring-offset-1 ring-offset-felt-800' : ''
-            }
-          >
-            <PlayingCard card={c} size="md" selected={selectedIds.has(c.id)} />
-          </div>
+    <div ref={wrapRef} className="pt-1.5" onPointerMove={move}>
+      {rows.map((row, r) => (
+        <div key={r} className={`flex justify-center ${r ? 'mt-1' : ''}`}>
+          {row.map((c, i) => (
+            <div
+              key={c.id}
+              data-card-id={c.id}
+              onPointerDown={(e) => down(e, c.id)}
+              onPointerUp={() => up(c.id)}
+              onPointerCancel={() => up(c.id)}
+              style={{ marginLeft: i ? -overlap : 0, touchAction: 'none' }}
+              className={`cursor-grab transition-transform ${
+                activeDrag === c.id ? 'z-20 -translate-y-3 scale-105 opacity-80' : ''
+              } ${highlightId === c.id ? 'animate-deal z-10' : ''}`}
+            >
+              <div
+                className={
+                  highlightId === c.id
+                    ? 'rounded-xl shadow-glow ring-2 ring-brass-300 ring-offset-1 ring-offset-felt-800'
+                    : ''
+                }
+              >
+                <PlayingCard card={c} size="md" selected={selectedIds.has(c.id)} />
+              </div>
+            </div>
+          ))}
         </div>
       ))}
     </div>

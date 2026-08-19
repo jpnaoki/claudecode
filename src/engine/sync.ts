@@ -8,19 +8,38 @@ import { GameState } from './state'
 
 // ---------- Diagnóstico / saúde do backend ----------
 
+/** Por que o backend não está utilizável — muda a orientação que damos ao jogador. */
+export type HealthReason = 'no-backend' | 'missing-tables' | 'offline'
+
 export interface Health {
   ok: boolean
   missing: string[] // tabelas que não respondem
   message?: string // mensagem crua do primeiro erro (diagnóstico)
+  reason?: HealthReason
+}
+
+/**
+ * O projeto Supabase no plano grátis HIBERNA após ~7 dias sem uso: aí as chamadas
+ * falham por rede, não por tabela faltando. Confundir os dois casos manda o jogador
+ * pro conserto errado, então classificamos o erro.
+ */
+function classify(message: string): HealthReason {
+  if (/does not exist|schema cache|PGRST205|42P01|relation/i.test(message)) return 'missing-tables'
+  return 'offline' // falha de rede/503: projeto hibernando, fora do ar ou sem internet
 }
 
 /**
  * Confere se as 3 tabelas existem e respondem. É o que separa "ao vivo" de verdade
- * de "cada um sozinho na sala" (tabelas não criadas / RLS bloqueando).
+ * de "cada um sozinho na sala".
  */
 export async function healthCheck(): Promise<Health> {
   if (!supabase)
-    return { ok: false, missing: ['room_players', 'events', 'games'], message: 'sem backend (.env não configurado)' }
+    return {
+      ok: false,
+      missing: ['room_players', 'events', 'games'],
+      message: 'sem backend (.env não configurado)',
+      reason: 'no-backend',
+    }
   const tables = ['room_players', 'events', 'games']
   const missing: string[] = []
   let message: string | undefined
@@ -31,7 +50,12 @@ export async function healthCheck(): Promise<Health> {
       message = message ?? error.message
     }
   }
-  return { ok: missing.length === 0, missing, message }
+  return {
+    ok: missing.length === 0,
+    missing,
+    message,
+    reason: message ? classify(message) : undefined,
+  }
 }
 
 // ---------- Partida (tabela `games`) ----------

@@ -1,6 +1,6 @@
 import { Card, isWild, isRedThree, isBlackThree } from '@/lib/types'
 import { GameState, Seat, teamOf } from './state'
-import { validateMeld, isCanastra } from './sequence'
+import { validateMeld, isCanastra, LAVADEIRA_RANKS } from './sequence'
 import type { Action } from './engine'
 
 /**
@@ -20,9 +20,10 @@ function findNewMeld(hand: Card[]): string[] | null {
   const wild = usable.find(isWild) ?? null
   const naturals = usable.filter((c) => !isWild(c))
 
-  // 1) Trinca: 3+ cartas do mesmo valor
+  // 1) Lavadeira: 3+ cartas do mesmo valor — SÓ 4 e Ás (regra da casa)
   const byRank = new Map<string, Card[]>()
   for (const c of naturals) {
+    if (!LAVADEIRA_RANKS.includes(c.rank)) continue
     const arr = byRank.get(c.rank) ?? []
     arr.push(c)
     byRank.set(c.rank, arr)

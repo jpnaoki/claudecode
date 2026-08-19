@@ -7,7 +7,8 @@ import { getIdentity, setName as persistName } from '@/lib/identity'
 import { useRoom, teamOfSeat, RoomPlayer } from '@/store/roomStore'
 import { useMatch } from '@/store/matchStore'
 import { Seat, SeatPlayer } from '@/engine/state'
-import { SETUP_SQL, sqlEditorUrl } from '@/lib/setupSql'
+import { SETUP_SQL, sqlEditorUrl, dashboardUrl } from '@/lib/setupSql'
+import { HealthReason } from '@/engine/sync'
 
 const SEATS = [0, 1, 2, 3]
 const TEAM_LABEL = { nos: 'Nós', eles: 'Eles' } as const
@@ -28,6 +29,7 @@ export default function Lobby() {
   const setOnStart = useRoom((s) => s.setOnStart)
   const chooseSeat = useRoom((s) => s.chooseSeat)
   const retry = useRoom((s) => s.retry)
+  const setupReason = useRoom((s) => s.setupReason)
   const hostMatch = useMatch((s) => s.host)
   const startBots = useMatch((s) => s.startBots)
 
@@ -99,10 +101,11 @@ export default function Lobby() {
     )
   }
 
-  // Backend sem as tabelas → guia o setup (1 vez) em vez de fingir "ao vivo"
+  // Backend indisponível → explica o motivo certo em vez de fingir "ao vivo"
   if (status === 'setup-needed' || status === 'no-backend') {
     return (
       <SetupNeeded
+        reason={setupReason ?? 'offline'}
         diag={lastStatus}
         onRetry={retry}
         onLeave={leave}
@@ -261,13 +264,19 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
-/** Tela de configuração: as tabelas do Supabase não existem. Guia o passo único de setup. */
+/**
+ * Backend indisponível. Dois motivos MUITO diferentes, então a tela se adapta:
+ * hibernando/fora do ar (plano grátis dorme após ~7 dias) x tabelas não criadas.
+ * Mandar o jogador pro conserto errado foi parte do que confundiu a turma.
+ */
 function SetupNeeded({
+  reason,
   diag,
   onRetry,
   onLeave,
   onPlayBots,
 }: {
+  reason: HealthReason
   diag: string | null
   onRetry: () => void
   onLeave: () => void
@@ -283,6 +292,8 @@ function SetupNeeded({
       /* ignore */
     }
   }
+  const sleeping = reason === 'offline'
+
   return (
     <div className="mx-auto flex min-h-full max-w-md flex-col px-5 pb-8">
       <header className="flex items-center justify-between py-4">
@@ -290,45 +301,89 @@ function SetupNeeded({
           ← início
         </button>
         <span className="rounded-full bg-ember-600/20 px-3 py-1 text-[11px] text-ember-300">
-          configuração pendente
+          {sleeping ? 'servidor indisponível' : 'configuração pendente'}
         </span>
       </header>
 
       <div className="panel rounded-2xl p-5">
-        <h1 className="text-xl text-gold">Falta 1 passo (só uma vez) 🔧</h1>
-        <p className="mt-2 text-sm text-bone-200/70">
-          O servidor de tempo real ainda não tem as tabelas. Sem elas,{' '}
-          <b>cada pessoa fica sozinha na sala</b> — foi o que travou o teste de vocês. Cole o SQL
-          abaixo no Supabase e todos passam a se ver.
-        </p>
+        {sleeping ? (
+          <>
+            <h1 className="text-xl text-gold">A mesa está dormindo 😴</h1>
+            <p className="mt-2 text-sm text-bone-200/70">
+              Não consegui falar com o servidor. O plano grátis do Supabase{' '}
+              <b>hiberna o projeto depois de ~7 dias sem uso</b> — é o motivo mais comum, e faria
+              todo mundo ficar sozinho na sala.
+            </p>
+            <p className="mt-3 text-sm text-bone-200/70">
+              Quem criou o projeto precisa abrir o painel e reativá-lo. Depois é só tocar em{' '}
+              <b>Tentar de novo</b>.
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <a
+                href={dashboardUrl()}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full rounded-xl border border-brass-600/50 bg-gradient-to-b from-brass-300 to-brass-500 px-5 py-3 text-center text-sm font-bold text-ink transition-all active:scale-[.98]"
+              >
+                Abrir painel do Supabase ↗
+              </a>
+              <Button variant="primary" className="w-full" onClick={onRetry}>
+                Tentar de novo
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h1 className="text-xl text-gold">Falta 1 passo (só uma vez) 🔧</h1>
+            <p className="mt-2 text-sm text-bone-200/70">
+              O servidor de tempo real ainda não tem as tabelas. Sem elas,{' '}
+              <b>cada pessoa fica sozinha na sala</b>. Cole o SQL abaixo no Supabase e todos passam
+              a se ver.
+            </p>
+            <ol className="mt-4 space-y-1 text-sm text-bone-100">
+              <li>1. Copie o SQL</li>
+              <li>2. Abra o SQL Editor do Supabase</li>
+              <li>3. Cole e clique em <b>Run</b></li>
+              <li>4. Volte e toque em <b>Testar de novo</b></li>
+            </ol>
+            <pre className="mt-4 max-h-48 overflow-auto rounded-xl border border-white/10 bg-black/40 p-3 text-[10px] leading-relaxed text-bone-200/80">
+              {SETUP_SQL}
+            </pre>
+            <div className="mt-3 flex flex-col gap-2">
+              <Button variant="gold" className="w-full" onClick={copy}>
+                {copied ? '✓ SQL copiado!' : 'Copiar SQL'}
+              </Button>
+              <a
+                href={sqlEditorUrl()}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-center text-sm font-semibold text-bone-100 transition-colors hover:bg-white/10"
+              >
+                Abrir SQL Editor ↗
+              </a>
+              <Button variant="primary" className="w-full" onClick={onRetry}>
+                Testar de novo
+              </Button>
+            </div>
+          </>
+        )}
 
-        <ol className="mt-4 space-y-1 text-sm text-bone-100">
-          <li>1. Copie o SQL</li>
-          <li>2. Abra o SQL Editor do Supabase</li>
-          <li>3. Cole e clique em <b>Run</b></li>
-          <li>4. Volte e toque em <b>Testar de novo</b></li>
-        </ol>
-
-        <pre className="mt-4 max-h-48 overflow-auto rounded-xl border border-white/10 bg-black/40 p-3 text-[10px] leading-relaxed text-bone-200/80">
-          {SETUP_SQL}
-        </pre>
-
-        <div className="mt-3 flex flex-col gap-2">
-          <Button variant="gold" className="w-full" onClick={copy}>
-            {copied ? '✓ SQL copiado!' : 'Copiar SQL'}
-          </Button>
-          <a
-            href={sqlEditorUrl()}
-            target="_blank"
-            rel="noreferrer"
-            className="w-full rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-center text-sm font-semibold text-bone-100 transition-colors hover:bg-white/10"
-          >
-            Abrir SQL Editor ↗
-          </a>
-          <Button variant="primary" className="w-full" onClick={onRetry}>
-            Testar de novo
-          </Button>
-        </div>
+        {sleeping && (
+          <details className="mt-4">
+            <summary className="cursor-pointer text-[11px] text-bone-200/40">
+              é a primeira vez? talvez faltem as tabelas
+            </summary>
+            <pre className="mt-2 max-h-40 overflow-auto rounded-xl border border-white/10 bg-black/40 p-3 text-[10px] leading-relaxed text-bone-200/80">
+              {SETUP_SQL}
+            </pre>
+            <button
+              onClick={copy}
+              className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-bone-100"
+            >
+              {copied ? '✓ SQL copiado!' : 'Copiar SQL'}
+            </button>
+          </details>
+        )}
 
         {diag && (
           <p className="mt-3 break-words text-center text-[10px] text-bone-200/40">

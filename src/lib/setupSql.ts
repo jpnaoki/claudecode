@@ -47,11 +47,19 @@ create policy "tranca anon events"       on public.events       for all using (t
 create policy "tranca anon games"        on public.games        for all using (true) with check (true);
 `
 
+const projectRef = (): string | undefined =>
+  ((import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '').match(
+    /https:\/\/([a-z0-9]+)\.supabase\./,
+  )?.[1]
+
 /** Link direto pro SQL Editor do projeto (deriva o ref da URL do Supabase). */
 export function sqlEditorUrl(): string {
-  const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? ''
-  const ref = url.match(/https:\/\/([a-z0-9]+)\.supabase\./)?.[1]
-  return ref
-    ? `https://supabase.com/dashboard/project/${ref}/sql/new`
-    : 'https://supabase.com/dashboard'
+  const ref = projectRef()
+  return ref ? `https://supabase.com/dashboard/project/${ref}/sql/new` : 'https://supabase.com/dashboard'
+}
+
+/** Painel do projeto — é onde se "acorda" um projeto grátis que hibernou. */
+export function dashboardUrl(): string {
+  const ref = projectRef()
+  return ref ? `https://supabase.com/dashboard/project/${ref}` : 'https://supabase.com/dashboard'
 }
