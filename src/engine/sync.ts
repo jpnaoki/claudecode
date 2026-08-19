@@ -6,6 +6,34 @@ import { GameState } from './state'
  * Funciona em qualquer rede que abra site normal (Wi-Fi de empresa, iCloud Private Relay etc.).
  */
 
+// ---------- Diagnóstico / saúde do backend ----------
+
+export interface Health {
+  ok: boolean
+  missing: string[] // tabelas que não respondem
+  message?: string // mensagem crua do primeiro erro (diagnóstico)
+}
+
+/**
+ * Confere se as 3 tabelas existem e respondem. É o que separa "ao vivo" de verdade
+ * de "cada um sozinho na sala" (tabelas não criadas / RLS bloqueando).
+ */
+export async function healthCheck(): Promise<Health> {
+  if (!supabase)
+    return { ok: false, missing: ['room_players', 'events', 'games'], message: 'sem backend (.env não configurado)' }
+  const tables = ['room_players', 'events', 'games']
+  const missing: string[] = []
+  let message: string | undefined
+  for (const t of tables) {
+    const { error } = await supabase.from(t).select('code', { head: true }).limit(1)
+    if (error) {
+      missing.push(t)
+      message = message ?? error.message
+    }
+  }
+  return { ok: missing.length === 0, missing, message }
+}
+
 // ---------- Partida (tabela `games`) ----------
 
 export async function fetchGame(code: string): Promise<GameState | null> {
@@ -54,9 +82,11 @@ export async function heartbeat(
   return error ? error.message : null
 }
 
-/** Quem está presente (visto nos últimos ~12s). */
-export async function fetchRoomPlayers(code: string): Promise<RoomPlayerRow[]> {
-  if (!supabase) return []
+/** Quem está presente (visto nos últimos ~12s). Reporta erro em vez de escondê-lo. */
+export async function fetchRoomPlayers(
+  code: string,
+): Promise<{ rows: RoomPlayerRow[]; error: string | null }> {
+  if (!supabase) return { rows: [], error: 'sem-backend' }
   const since = new Date(Date.now() - 12000).toISOString()
   const { data, error } = await supabase
     .from('room_players')
@@ -65,9 +95,9 @@ export async function fetchRoomPlayers(code: string): Promise<RoomPlayerRow[]> {
     .gte('last_seen', since)
   if (error) {
     console.warn('[sync] fetchRoomPlayers', error.message)
-    return []
+    return { rows: [], error: error.message }
   }
-  return (data as RoomPlayerRow[]) ?? []
+  return { rows: (data as RoomPlayerRow[]) ?? [], error: null }
 }
 
 export async function leaveRoom(code: string, id: string): Promise<void> {

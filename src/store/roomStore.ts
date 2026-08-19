@@ -8,10 +8,17 @@ import {
   fetchEvents,
   latestEventId,
   fetchGame,
+  healthCheck,
 } from '@/engine/sync'
 import { supabase } from '@/lib/supabase'
 
-export type RoomStatus = 'idle' | 'connecting' | 'connected' | 'no-backend' | 'error'
+export type RoomStatus =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'no-backend'
+  | 'setup-needed' // tabelas do Supabase não existem → guiar o setup
+  | 'error'
 
 export interface RoomPlayer {
   id: string
@@ -49,10 +56,12 @@ interface RoomStore {
   reactions: Reaction[]
   mySeat: number | null
   lastStatus: string | null
+  setupMissing: string[] // tabelas ausentes quando status === 'setup-needed'
   onStart?: () => void
 
   setOnStart: (fn?: () => void) => void
   connect: (code: string, me: Identity) => void
+  retry: () => void
   disconnect: () => void
   chooseSeat: (seat: number | null) => void
   start: () => void
@@ -71,12 +80,17 @@ export const useRoom = create<RoomStore>((set, get) => {
   }
 
   const pollPlayers = async (code: string, me: Identity) => {
-    const rows = await fetchRoomPlayers(code)
+    const { rows, error } = await fetchRoomPlayers(code)
+    if (error) {
+      // não finge mais "ao vivo": mostra o erro real
+      set({ status: 'error', lastStatus: error })
+      return
+    }
     const list: RoomPlayer[] = rows
       .map((r) => ({ id: r.id, name: r.name, seat: r.seat, joinedAt: Date.parse(r.last_seen) || 0 }))
       .sort((a, b) => a.name.localeCompare(b.name))
     const mine = list.find((p) => p.id === me.id)
-    set({ players: list, status: 'connected', mySeat: mine?.seat ?? mySeatLocal })
+    set({ players: list, status: 'connected', lastStatus: null, mySeat: mine?.seat ?? mySeatLocal })
   }
 
   const pollEvents = async (code: string) => {
@@ -105,6 +119,7 @@ export const useRoom = create<RoomStore>((set, get) => {
     reactions: [],
     mySeat: null,
     lastStatus: null,
+    setupMissing: [],
 
     setOnStart: (fn) => set({ onStart: fn }),
 
@@ -127,17 +142,31 @@ export const useRoom = create<RoomStore>((set, get) => {
         set({ status: 'no-backend', code, me, lastStatus: 'sem backend (.env)' })
         return
       }
-      set({ code, me, status: 'connecting', players: [], mySeat: null, lastStatus: null })
+      set({ code, me, status: 'connecting', players: [], mySeat: null, lastStatus: null, setupMissing: [] })
 
-      // bate o ponto já, e depois em ciclo
-      void heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal })
-      void latestEventId(code).then((id) => (eventCursor = id))
-      void pollPlayers(code, me)
+      // Antes de tudo: as tabelas existem? Sem isto, cada um fica sozinho na sala.
+      void healthCheck().then((h) => {
+        // ignora se o usuário já saiu/trocou de sala nesse meio-tempo
+        if (get().code !== code) return
+        if (!h.ok) {
+          set({ status: 'setup-needed', setupMissing: h.missing, lastStatus: h.message ?? 'tabelas ausentes' })
+          return
+        }
+        // saudável → começa a bater ponto e a fazer polling
+        void heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal })
+        void latestEventId(code).then((id) => (eventCursor = id))
+        void pollPlayers(code, me)
 
-      timers.push(setInterval(() => heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal }), 4000))
-      timers.push(setInterval(() => pollPlayers(code, me), 2500))
-      timers.push(setInterval(() => pollEvents(code), 2000))
-      timers.push(setInterval(() => pollGameStart(code), 2500))
+        timers.push(setInterval(() => heartbeat(code, { id: me.id, name: me.name, seat: mySeatLocal }), 4000))
+        timers.push(setInterval(() => pollPlayers(code, me), 2500))
+        timers.push(setInterval(() => pollEvents(code), 2000))
+        timers.push(setInterval(() => pollGameStart(code), 2500))
+      })
+    },
+
+    retry: () => {
+      const { code, me } = get()
+      if (code && me) get().connect(code, me)
     },
 
     disconnect: () => {
@@ -151,7 +180,7 @@ export const useRoom = create<RoomStore>((set, get) => {
       } catch {
         /* ignore */
       }
-      set({ code: null, me: null, status: 'idle', players: [], reactions: [], mySeat: null })
+      set({ code: null, me: null, status: 'idle', players: [], reactions: [], mySeat: null, setupMissing: [] })
     },
 
     chooseSeat: (seat) => {

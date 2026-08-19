@@ -6,6 +6,7 @@ import { getIdentity } from '@/lib/identity'
 import { Seat, teamOf, GameState } from '@/engine/state'
 import { isCanastra, isCanastraLimpa, validateMeld } from '@/engine/sequence'
 import { canTakeDiscard } from '@/engine/engine'
+import { nextBotAction } from '@/engine/bot'
 import { Card, isWild, isRedThree } from '@/lib/types'
 import { sfx, unlockAudio, vibrate } from '@/lib/sfx'
 import PlayingCard from '@/components/PlayingCard'
@@ -38,13 +39,20 @@ export default function Table() {
   const state = useMatch((s) => s.state)
   const mySeat = useMatch((s) => s.mySeat)
   const local = useMatch((s) => s.local)
+  const mode = useMatch((s) => s.mode)
+  const humanSeat = useMatch((s) => s.humanSeat)
+  const bots = useMatch((s) => s.bots)
   const error = useMatch((s) => s.error)
   const act = useMatch((s) => s.act)
   const leaveMatch = useMatch((s) => s.leave)
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  // Decide online x local + reconexão (volta pela sala salva)
+  // Decide online x offline + reconexão (volta pela sala salva)
   useEffect(() => {
+    const m = useMatch.getState()
+    // já tem uma partida offline (bots/hotseat) rolando → não mexe
+    if (m.state && m.mode !== 'online') return
+
     const room = useRoom.getState()
     const me = getIdentity()
     let code = room.code
@@ -55,7 +63,6 @@ export default function Table() {
         room.connect(saved, me)
       }
     }
-    const m = useMatch.getState()
     if (code && me.name) {
       if (m.code !== code || !m.state) m.join(code, me.id)
     } else if (!m.state) {
@@ -63,8 +70,15 @@ export default function Table() {
     }
   }, [])
 
-  const viewSeat: Seat | null = local && state ? state.turn : mySeat
-  const isMyTurn = !!state && (local || (mySeat != null && state.turn === mySeat))
+  const viewSeat: Seat | null =
+    mode === 'bots' ? humanSeat : local && state ? state.turn : mySeat
+  const isMyTurn =
+    !!state &&
+    (mode === 'bots'
+      ? state.turn === humanSeat
+      : mode === 'hotseat'
+        ? true
+        : mySeat != null && state.turn === mySeat)
 
   // limpa seleção ao trocar de quem joga
   useEffect(() => setSelected(new Set()), [state?.turn, viewSeat])
@@ -117,6 +131,31 @@ export default function Table() {
     })
   }, [state, viewSeat])
 
+  // auto-organiza a mão a cada nova mão distribuída (uma vez por mão)
+  useEffect(() => {
+    if (viewSeat == null || !state) return
+    setOrder(sortedHandIds(state.hands[viewSeat]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.handNumber, viewSeat])
+
+  // driver dos bots (modo offline): quando é a vez de um bot, ele joga sozinho
+  const botTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (mode !== 'bots' || !state) return
+    if (!bots.includes(state.turn)) return
+    if (state.phase !== 'draw' && state.phase !== 'play') return
+    botTimer.current = setTimeout(() => {
+      const cur = useMatch.getState().state
+      if (!cur || !bots.includes(cur.turn)) return
+      const a = nextBotAction(cur, cur.turn)
+      if (a) useMatch.getState().act(a)
+    }, 750)
+    return () => {
+      if (botTimer.current) clearTimeout(botTimer.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.rev, mode])
+
   if (!state) {
     return (
       <div className="grid min-h-full place-items-center px-6 text-center">
@@ -164,6 +203,7 @@ export default function Table() {
   const canBaixar = isMyTurn && state.phase === 'play' && (ids.length >= 3 || selectedAllRed3)
   const podePegarLixo =
     isMyTurn && state.phase === 'draw' && !state.hasDrawn && canTakeDiscard(state, state.turn)
+  const canDrawStock = isMyTurn && state.phase === 'draw' && !state.hasDrawn
 
   const doBaixar = () => {
     sfx.play()
@@ -222,16 +262,36 @@ export default function Table() {
           }}
         >
           <Pile label={`monte ${state.stock.length}`}>
-            <PlayingCard faceDown size="md" />
+            <button
+              type="button"
+              disabled={!canDrawStock}
+              onClick={() => { sfx.play(); act({ type: 'draw' }) }}
+              aria-label="Comprar do monte"
+              className={`rounded-xl transition-transform ${
+                canDrawStock ? 'animate-pulse ring-2 ring-brass-300 hover:-translate-y-1 active:scale-95' : 'cursor-default'
+              }`}
+            >
+              <PlayingCard faceDown size="md" />
+            </button>
           </Pile>
           <Pile label={state.discardLocked ? '🔒 lixo' : `lixo ${state.discard.length}`}>
-            {topDiscard ? (
-              <PlayingCard card={topDiscard} size="md" />
-            ) : (
-              <div className="grid h-24 w-16 place-items-center rounded-xl border border-dashed border-white/15 text-[10px] text-bone-200/30">
-                vazio
-              </div>
-            )}
+            <button
+              type="button"
+              disabled={!podePegarLixo}
+              onClick={() => { sfx.play(); act({ type: 'takeDiscard', meldWith: ids }); setSelected(new Set()) }}
+              aria-label="Pegar o lixo"
+              className={`rounded-xl transition-transform ${
+                podePegarLixo ? 'ring-2 ring-emerald-400 hover:-translate-y-1 active:scale-95' : 'cursor-default'
+              }`}
+            >
+              {topDiscard ? (
+                <PlayingCard card={topDiscard} size="md" />
+              ) : (
+                <div className="grid h-24 w-16 place-items-center rounded-xl border border-dashed border-white/15 text-[10px] text-bone-200/30">
+                  vazio
+                </div>
+              )}
+            </button>
           </Pile>
           <Pile label={`mortos ${state.mortos.length}`}>
             <div className="relative">

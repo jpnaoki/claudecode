@@ -3,15 +3,21 @@ import { GameState, Seat, SeatPlayer, dealHand } from '@/engine/state'
 import { Action, apply } from '@/engine/engine'
 import { fetchGame, saveGame } from '@/engine/sync'
 
+export type MatchMode = 'online' | 'hotseat' | 'bots'
+
 interface MatchStore {
   code: string | null
   myId: string | null
   state: GameState | null
   mySeat: Seat | null
-  local: boolean
+  local: boolean // true em hotseat e bots (offline, um aparelho)
+  mode: MatchMode
+  humanSeat: Seat | null // no modo bots: o assento que a pessoa controla
+  bots: Seat[] // assentos jogados pela IA
   error: string | null
 
   startLocal: () => void
+  startBots: () => void
   host: (code: string, players: Record<Seat, SeatPlayer | null>, myId: string) => Promise<void>
   join: (code: string, myId: string) => Promise<void>
   act: (action: Action) => void
@@ -58,8 +64,12 @@ export const useMatch = create<MatchStore>((set, get) => {
     state: null,
     mySeat: null,
     local: false,
+    mode: 'online',
+    humanSeat: null,
+    bots: [],
     error: null,
 
+    // Hotseat: um aparelho controla as 4 mãos (passa e joga).
     startLocal: () => {
       stopPolling()
       const me: SeatPlayer = { id: 'local', name: 'Você' }
@@ -70,19 +80,32 @@ export const useMatch = create<MatchStore>((set, get) => {
         3: { id: 'b3', name: 'Léo' },
       }
       const state = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, players })
-      set({ code: null, myId: 'local', state, mySeat: null, local: true, error: null })
+      set({ code: null, myId: 'local', state, mySeat: null, local: true, mode: 'hotseat', humanSeat: null, bots: [], error: null })
+    },
+
+    // Offline vs bots: você (assento 0) contra 3 bots. Zero backend.
+    startBots: () => {
+      stopPolling()
+      const players: Record<Seat, SeatPlayer | null> = {
+        0: { id: 'you', name: 'Você' },
+        1: { id: 'bot1', name: 'Rafa 🤖' },
+        2: { id: 'bot2', name: 'Bia 🤖' },
+        3: { id: 'bot3', name: 'Léo 🤖' },
+      }
+      const state = dealHand({ handNumber: 1, dealer: 3, scores: { nos: 0, eles: 0 }, target: 3000, players })
+      set({ code: null, myId: 'you', state, mySeat: 0, local: true, mode: 'bots', humanSeat: 0, bots: [1, 2, 3], error: null })
     },
 
     host: async (code, players, myId) => {
       stopPolling()
       const state = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, players })
-      set({ code, myId, state, mySeat: seatOfId(state, myId), local: false, error: null })
+      set({ code, myId, state, mySeat: seatOfId(state, myId), local: false, mode: 'online', humanSeat: null, bots: [], error: null })
       await saveGame(code, state)
       startPolling(code, myId)
     },
 
     join: async (code, myId) => {
-      set({ code, myId, local: false })
+      set({ code, myId, local: false, mode: 'online', humanSeat: null, bots: [] })
       startPolling(code, myId)
     },
 
@@ -101,13 +124,16 @@ export const useMatch = create<MatchStore>((set, get) => {
       }
       const next = res.state
       next.rev = (state.rev ?? 0) + 1
-      set({ state: next, mySeat: local ? null : seatOfId(next, get().myId!) })
+      const { mode, humanSeat } = get()
+      const nextMySeat =
+        mode === 'online' ? seatOfId(next, get().myId!) : mode === 'bots' ? humanSeat : null
+      set({ state: next, mySeat: nextMySeat })
       if (!local && code) void saveGame(code, next)
     },
 
     leave: () => {
       stopPolling()
-      set({ code: null, myId: null, state: null, mySeat: null, local: false, error: null })
+      set({ code: null, myId: null, state: null, mySeat: null, local: false, mode: 'online', humanSeat: null, bots: [], error: null })
     },
   }
 })

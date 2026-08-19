@@ -7,6 +7,7 @@ import { getIdentity, setName as persistName } from '@/lib/identity'
 import { useRoom, teamOfSeat, RoomPlayer } from '@/store/roomStore'
 import { useMatch } from '@/store/matchStore'
 import { Seat, SeatPlayer } from '@/engine/state'
+import { SETUP_SQL, sqlEditorUrl } from '@/lib/setupSql'
 
 const SEATS = [0, 1, 2, 3]
 const TEAM_LABEL = { nos: 'Nós', eles: 'Eles' } as const
@@ -26,7 +27,9 @@ export default function Lobby() {
   const disconnect = useRoom((s) => s.disconnect)
   const setOnStart = useRoom((s) => s.setOnStart)
   const chooseSeat = useRoom((s) => s.chooseSeat)
+  const retry = useRoom((s) => s.retry)
   const hostMatch = useMatch((s) => s.host)
+  const startBots = useMatch((s) => s.startBots)
 
   // conecta à sala assim que houver nome
   useEffect(() => {
@@ -96,6 +99,21 @@ export default function Lobby() {
     )
   }
 
+  // Backend sem as tabelas → guia o setup (1 vez) em vez de fingir "ao vivo"
+  if (status === 'setup-needed' || status === 'no-backend') {
+    return (
+      <SetupNeeded
+        diag={lastStatus}
+        onRetry={retry}
+        onLeave={leave}
+        onPlayBots={() => {
+          startBots()
+          navigate('/mesa')
+        }}
+      />
+    )
+  }
+
   return (
     <div className="mx-auto flex min-h-full max-w-md flex-col px-5 pb-8">
       <SocialLayer />
@@ -106,9 +124,9 @@ export default function Lobby() {
         <StatusPill status={status} />
       </header>
 
-      {(status === 'error' || status === 'no-backend') && lastStatus && (
+      {status === 'error' && lastStatus && (
         <div className="mb-2 rounded-lg border border-ember-500/30 bg-ember-600/10 px-3 py-1.5 text-center text-[10px] text-ember-300">
-          diagnóstico: {lastStatus}
+          erro de conexão: {lastStatus}
         </div>
       )}
 
@@ -201,12 +219,6 @@ export default function Lobby() {
 
       <div className="flex-1" />
 
-      {status === 'no-backend' && (
-        <p className="mb-3 rounded-xl border border-ember-500/30 bg-ember-600/10 p-3 text-center text-xs text-ember-400">
-          Backend não configurado (.env). O tempo real não vai funcionar.
-        </p>
-      )}
-
       <Button
         variant="gold"
         className="mt-4 w-full"
@@ -237,6 +249,7 @@ function StatusPill({ status }: { status: string }) {
     connecting: ['conectando…', 'bg-amber-400'],
     connected: ['ao vivo', 'bg-emerald-400'],
     'no-backend': ['offline', 'bg-zinc-400'],
+    'setup-needed': ['configurar', 'bg-ember-400'],
     error: ['erro de conexão', 'bg-red-400'],
   }
   const [label, dot] = map[status] ?? ['—', 'bg-zinc-400']
@@ -245,5 +258,93 @@ function StatusPill({ status }: { status: string }) {
       <span className={`h-2 w-2 rounded-full ${dot} ${status === 'connected' ? 'animate-pulse' : ''}`} />
       {label}
     </span>
+  )
+}
+
+/** Tela de configuração: as tabelas do Supabase não existem. Guia o passo único de setup. */
+function SetupNeeded({
+  diag,
+  onRetry,
+  onLeave,
+  onPlayBots,
+}: {
+  diag: string | null
+  onRetry: () => void
+  onLeave: () => void
+  onPlayBots: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(SETUP_SQL)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* ignore */
+    }
+  }
+  return (
+    <div className="mx-auto flex min-h-full max-w-md flex-col px-5 pb-8">
+      <header className="flex items-center justify-between py-4">
+        <button onClick={onLeave} className="text-xs uppercase tracking-widest text-brass-400/70">
+          ← início
+        </button>
+        <span className="rounded-full bg-ember-600/20 px-3 py-1 text-[11px] text-ember-300">
+          configuração pendente
+        </span>
+      </header>
+
+      <div className="panel rounded-2xl p-5">
+        <h1 className="text-xl text-gold">Falta 1 passo (só uma vez) 🔧</h1>
+        <p className="mt-2 text-sm text-bone-200/70">
+          O servidor de tempo real ainda não tem as tabelas. Sem elas,{' '}
+          <b>cada pessoa fica sozinha na sala</b> — foi o que travou o teste de vocês. Cole o SQL
+          abaixo no Supabase e todos passam a se ver.
+        </p>
+
+        <ol className="mt-4 space-y-1 text-sm text-bone-100">
+          <li>1. Copie o SQL</li>
+          <li>2. Abra o SQL Editor do Supabase</li>
+          <li>3. Cole e clique em <b>Run</b></li>
+          <li>4. Volte e toque em <b>Testar de novo</b></li>
+        </ol>
+
+        <pre className="mt-4 max-h-48 overflow-auto rounded-xl border border-white/10 bg-black/40 p-3 text-[10px] leading-relaxed text-bone-200/80">
+          {SETUP_SQL}
+        </pre>
+
+        <div className="mt-3 flex flex-col gap-2">
+          <Button variant="gold" className="w-full" onClick={copy}>
+            {copied ? '✓ SQL copiado!' : 'Copiar SQL'}
+          </Button>
+          <a
+            href={sqlEditorUrl()}
+            target="_blank"
+            rel="noreferrer"
+            className="w-full rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-center text-sm font-semibold text-bone-100 transition-colors hover:bg-white/10"
+          >
+            Abrir SQL Editor ↗
+          </a>
+          <Button variant="primary" className="w-full" onClick={onRetry}>
+            Testar de novo
+          </Button>
+        </div>
+
+        {diag && (
+          <p className="mt-3 break-words text-center text-[10px] text-bone-200/40">
+            diagnóstico: {diag}
+          </p>
+        )}
+      </div>
+
+      <div className="my-4 flex items-center gap-3 text-[11px] uppercase tracking-widest text-bone-200/40">
+        <div className="hairline-brass flex-1 opacity-40" />
+        enquanto isso
+        <div className="hairline-brass flex-1 opacity-40" />
+      </div>
+      <Button variant="ghost" className="w-full" onClick={onPlayBots}>
+        🤖 Jogar offline com bots agora
+      </Button>
+    </div>
   )
 }

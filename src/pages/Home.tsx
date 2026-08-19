@@ -5,6 +5,7 @@ import Ashtray from '@/components/Ashtray'
 import PlayingCard from '@/components/PlayingCard'
 import { Card } from '@/lib/types'
 import { generateRoomCode, setName as persistName } from '@/lib/identity'
+import { useMatch } from '@/store/matchStore'
 
 const FAN: Card[] = [
   { id: 'a', suit: 'espadas', rank: 'A' },
@@ -25,6 +26,11 @@ export default function Home() {
   const joinRoom = () => {
     persistName(name)
     navigate(`/sala/${code.toUpperCase()}`)
+  }
+  const playBots = () => {
+    if (name.trim()) persistName(name)
+    useMatch.getState().startBots()
+    navigate('/mesa')
   }
 
   return (
@@ -106,6 +112,21 @@ export default function Home() {
               Entrar
             </Button>
           </div>
+        </div>
+
+        {/* jogar offline com bots (sem internet / sem sala) */}
+        <div className="mt-4 w-full">
+          <div className="mb-3 flex items-center gap-3 text-[11px] uppercase tracking-widest text-bone-200/40">
+            <div className="hairline-brass flex-1 opacity-40" />
+            sem internet?
+            <div className="hairline-brass flex-1 opacity-40" />
+          </div>
+          <Button variant="ghost" className="w-full" onClick={playBots}>
+            🤖 Jogar offline com bots
+          </Button>
+          <p className="mt-2 text-center text-[11px] text-bone-200/40">
+            Você e 3 bots, na hora — ótimo pra viagem ou pra treinar as regras.
+          </p>
         </div>
 
         {/* cinzeiro de boas-vindas */}
