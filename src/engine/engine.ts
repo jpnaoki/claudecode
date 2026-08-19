@@ -82,7 +82,9 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
     case 'draw': {
       if (state.phase !== 'draw' || state.hasDrawn) return fail(state, 'Você já comprou nesta vez.')
       const s = clone(state)
-      if (s.stock.length === 0) return endHand(s) // monte acabou: encerra a mão
+      // O morto TAMBÉM é jogo: quando o monte acaba, um morto vira monte.
+      // A mão só termina quando não sobra nem monte nem morto.
+      if (!refillStock(s)) return endHand(s)
       const card = s.stock.pop()!
       s.hands[actor].push(card) // 3 vermelho também entra normal; o jogador baixa depois
       s.lastDrawn = card.id
@@ -147,7 +149,7 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       let extra = 0
       for (const c of picked.picked) {
         s.redThrees[team].push(c)
-        if (s.stock.length > 0) {
+        if (refillStock(s)) {
           const repl = s.stock.pop()!
           s.hands[actor].push(repl)
           s.lastDrawn = repl.id
@@ -200,8 +202,11 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       if (i === -1) return fail(state, 'Carta não está na sua mão.')
       const card = state.hands[actor][i]
       const wouldEmpty = state.hands[actor].length === 1
+      // só dá pra pegar o morto se a dupla ainda não pegou E ainda existe morto
+      // (ele pode ter virado monte quando as compras acabaram)
+      const podePegarMorto = !state.tookMorto[team] && state.mortos.length > 0
 
-      if (wouldEmpty && state.tookMorto[team] && !hasCanastra(s0(state), team))
+      if (wouldEmpty && !podePegarMorto && !hasCanastra(s0(state), team))
         return fail(state, 'Você precisa de pelo menos uma canastra para bater.')
 
       const s = clone(state)
@@ -211,10 +216,9 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       s.discardLocked = isBlackThree(card) || isWild(card)
 
       if (s.hands[actor].length === 0) {
-        if (!s.tookMorto[team]) {
+        if (podePegarMorto) {
           // pega o morto e continua jogando
-          const morto = s.mortos.pop() ?? []
-          s.hands[actor] = morto
+          s.hands[actor] = s.mortos.pop()!
           s.tookMorto[team] = true
           s.log.push(`${seatName(s, actor)} esvaziou a mão e pegou o morto.`)
           return ok(s) // turno continua
@@ -236,13 +240,25 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
 
 const s0 = (s: GameState) => s // helper p/ leitura (evita clone só pra checar canastra)
 
+/**
+ * Garante carta no monte: se acabou, um MORTO vira monte (regra da casa — o morto
+ * também é jogo). Retorna false só quando não há mais monte nem morto: aí a mão acaba.
+ */
+function refillStock(s: GameState): boolean {
+  if (s.stock.length > 0) return true
+  const morto = s.mortos.pop()
+  if (!morto || morto.length === 0) return false
+  s.stock = morto
+  s.log.push('O monte acabou — o morto virou monte. 🔄')
+  return true
+}
+
 /** Quando a mão de quem jogou esvazia ao BAIXAR (não no descarte): pega morto ou bate. */
 function afterShrink(s: GameState, actor: Seat): GameState {
   const team = teamOf(actor)
   if (s.hands[actor].length > 0) return s
-  if (!s.tookMorto[team]) {
-    const morto = s.mortos.pop() ?? []
-    s.hands[actor] = morto
+  if (!s.tookMorto[team] && s.mortos.length > 0) {
+    s.hands[actor] = s.mortos.pop()!
     s.tookMorto[team] = true
     s.log.push(`${seatName(s, actor)} baixou tudo e pegou o morto.`)
     return s

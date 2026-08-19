@@ -119,6 +119,46 @@ describe('fluxo de turno', () => {
   })
 })
 
+describe('o morto também é jogo: vira monte quando as compras acabam', () => {
+  const semMonte = (mortos: number) => {
+    const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed: 'morto' })
+    s.stock = []
+    s.mortos = s.mortos.slice(0, mortos)
+    s.turn = 1
+    s.phase = 'draw'
+    s.hasDrawn = false
+    return s
+  }
+
+  it('com morto sobrando, o monte é reabastecido e a mão CONTINUA', () => {
+    const s = semMonte(2)
+    const r = apply(s, { type: 'draw' }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.phase).toBe('play') // seguiu jogando
+    expect(r.state.mortos.length).toBe(1) // um morto virou monte
+    expect(r.state.stock.length).toBe(10) // 11 do morto menos a carta comprada
+    expect(r.state.log.some((l) => l.includes('morto virou monte'))).toBe(true)
+  })
+
+  it('sem monte E sem morto, aí sim a mão acaba', () => {
+    const s = semMonte(0)
+    const r = apply(s, { type: 'draw' }, 1)
+    expect(['handOver', 'matchOver']).toContain(r.state.phase)
+    expect(r.state.lastHand?.reason).toBe('monte')
+  })
+
+  it('sem morto disponível, esvaziar a mão exige canastra (não trava)', () => {
+    const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed: 'z' })
+    s.mortos = [] // já viraram monte
+    s.turn = 1
+    s.phase = 'play'
+    s.hasDrawn = true
+    s.hands[1] = [c('K', 'ouros', 3)]
+    const r = apply(s, { type: 'discard', cardId: 'K-ouros-3' }, 1)
+    expect(r.error).toBeTruthy() // sem canastra não pode bater
+  })
+})
+
 describe('penalidade do 3 preto (-100 por CADA)', () => {
   const semNada = {
     melds: [],
