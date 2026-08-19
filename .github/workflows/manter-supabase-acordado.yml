@@ -1,0 +1,69 @@
+# Mantém o projeto Supabase acordado.
+#
+# POR QUÊ: no plano grátis o projeto HIBERNA depois de ~7 dias sem uso — foi isso
+# que deixou a turma "sozinha na sala" sem entender o motivo. Este robô faz uma
+# consulta minúscula a cada 3 dias, então o projeto nunca fica ocioso.
+#
+# ZERO CONFIGURAÇÃO: as credenciais são lidas do próprio site publicado (a chave
+# `anon` já é pública — ela roda no navegador de todo mundo que abre o app). Assim
+# não é preciso cadastrar secrets. Se algum dia quiser fixá-las, basta criar os
+# secrets SUPABASE_URL e SUPABASE_ANON_KEY que eles têm prioridade.
+
+name: Manter Supabase acordado
+
+on:
+  schedule:
+    - cron: '0 12 */3 * *' # a cada 3 dias, meio-dia UTC (9h de Brasília)
+  workflow_dispatch: {} # dá pra rodar na mão pelo botão "Run workflow"
+
+env:
+  SITE: https://claudecode-two-alpha.vercel.app
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descobrir credenciais públicas
+        id: cred
+        run: |
+          URL="${{ secrets.SUPABASE_URL }}"
+          KEY="${{ secrets.SUPABASE_ANON_KEY }}"
+
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "Lendo credenciais públicas do site…"
+            BUNDLE=$(curl -sS --max-time 30 "$SITE/" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)
+            if [ -z "$BUNDLE" ]; then
+              echo "::error::Não achei o bundle em $SITE — o site mudou de endereço ou está fora do ar."
+              exit 1
+            fi
+            JS=$(curl -sS --max-time 60 "$SITE$BUNDLE")
+            URL=$(printf '%s' "$JS" | grep -oE 'https://[a-z0-9]+\.supabase\.co' | head -1)
+            KEY=$(printf '%s' "$JS" | grep -oE 'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}' | head -1)
+          fi
+
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::error::Não consegui obter URL/chave do Supabase."
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "Projeto: $URL"
+
+      - name: Cutucar o banco (consulta mínima)
+        run: |
+          URL="${{ steps.cred.outputs.url }}"
+          KEY="${{ steps.cred.outputs.key }}"
+          falhas=0
+          for tabela in games room_players events; do
+            code=$(curl -s -o /tmp/r.txt -w "%{http_code}" --max-time 30 \
+              "$URL/rest/v1/$tabela?select=code&limit=1" \
+              -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+            echo "$tabela -> HTTP $code"
+            [ "$code" = "200" ] || { cat /tmp/r.txt; falhas=$((falhas+1)); }
+          done
+          if [ "$falhas" -gt 0 ]; then
+            echo "::error::$falhas tabela(s) não responderam. O projeto pode estar pausado — abra o painel do Supabase para reativar."
+            exit 1
+          fi
+          echo "✅ Supabase acordado e as 3 tabelas respondendo."

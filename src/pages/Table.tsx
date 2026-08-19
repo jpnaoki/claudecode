@@ -66,7 +66,9 @@ export default function Table() {
     if (code && me.name) {
       if (m.code !== code || !m.state) m.join(code, me.id)
     } else if (!m.state) {
-      m.startLocal()
+      // offline: retoma o jogo salvo; senão começa contra BOTS.
+      // (nunca cair no "passa e joga" sem querer — dava a impressão de bot que não joga)
+      if (!m.resumeOffline()) m.startBots()
     }
   }, [])
 
@@ -145,10 +147,20 @@ export default function Table() {
     if (!bots.includes(state.turn)) return
     if (state.phase !== 'draw' && state.phase !== 'play') return
     botTimer.current = setTimeout(() => {
-      const cur = useMatch.getState().state
+      const m = useMatch.getState()
+      const cur = m.state
       if (!cur || !bots.includes(cur.turn)) return
+      const revAntes = cur.rev
       const a = nextBotAction(cur, cur.turn)
-      if (a) useMatch.getState().act(a)
+      if (a) m.act(a)
+      // Rede de segurança: se a jogada não passou (estado intacto), descarta pra
+      // não congelar a mesa esperando um bot que não consegue jogar.
+      const depois = useMatch.getState().state
+      if (depois && depois.rev === revAntes && bots.includes(depois.turn)) {
+        const mao = depois.hands[depois.turn]
+        if (depois.phase === 'draw') m.act({ type: 'draw' })
+        else if (mao.length) m.act({ type: 'discard', cardId: mao[mao.length - 1].id })
+      }
     }, 750)
     return () => {
       if (botTimer.current) clearTimeout(botTimer.current)
@@ -407,7 +419,13 @@ export default function Table() {
 
       {/* fim de mão / fim de jogo */}
       {(state.phase === 'handOver' || state.phase === 'matchOver') && (
-        <EndOverlay state={state} canAdvance={local || mySeat === 0} onNext={() => act({ type: 'nextHand' })} onLeave={leave} />
+        <EndOverlay
+          state={state}
+          myTeam={myTeam}
+          canAdvance={local || mySeat === 0}
+          onNext={() => act({ type: 'nextHand' })}
+          onLeave={leave}
+        />
       )}
     </div>
   )
@@ -668,24 +686,44 @@ function TeamMelds({
   )
 }
 
+/** Fim de mão explicado: POR QUE acabou e de onde veio cada ponto. */
 function EndOverlay({
   state,
+  myTeam,
   canAdvance,
   onNext,
   onLeave,
 }: {
   state: GameState
+  myTeam: 'nos' | 'eles'
   canAdvance: boolean
   onNext: () => void
   onLeave: () => void
 }) {
   const over = state.phase === 'matchOver'
   const winnerTxt = state.winner === 'nos' ? 'Nós' : 'Eles'
+  const lh = state.lastHand
+  const outro = myTeam === 'nos' ? 'eles' : 'nos'
+  const nome = (t: 'nos' | 'eles') => (t === 'nos' ? 'Nós' : 'Eles')
+
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 px-6 backdrop-blur-sm">
-      <div className="panel w-full max-w-sm rounded-2xl p-6 text-center">
-        <h2 className="text-2xl text-gold">{over ? `🏆 Dupla ${winnerTxt} venceu!` : 'Fim da mão'}</h2>
-        <div className="my-4 flex justify-center gap-8">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm">
+      <div className="panel flex max-h-full w-full max-w-sm flex-col rounded-2xl p-5">
+        <h2 className="shrink-0 text-center text-2xl text-gold">
+          {over ? `🏆 Dupla ${winnerTxt} venceu!` : 'Fim da mão'}
+        </h2>
+
+        {/* POR QUE a mão acabou — era o que pegava todo mundo de surpresa */}
+        {lh && (
+          <p className="mt-1 shrink-0 text-center text-xs text-bone-200/70">
+            {lh.reason === 'bateu'
+              ? `${lh.batedorNome ?? 'Alguém'} bateu — dupla ${nome(lh.batedor ?? 'nos')} encerrou a mão.`
+              : 'O monte de compras acabou — por isso a mão terminou.'}
+          </p>
+        )}
+
+        {/* placar acumulado */}
+        <div className="my-3 flex shrink-0 justify-center gap-8">
           <div>
             <div className="text-xs uppercase tracking-widest text-brass-300">Nós</div>
             <div className="font-display text-3xl">{state.scores.nos}</div>
@@ -695,17 +733,62 @@ function EndOverlay({
             <div className="font-display text-3xl">{state.scores.eles}</div>
           </div>
         </div>
-        {over ? (
-          <Button variant="gold" className="w-full" onClick={onLeave}>
-            Voltar ao início
-          </Button>
-        ) : canAdvance ? (
-          <Button variant="gold" className="w-full" onClick={onNext}>
-            Próxima mão
-          </Button>
-        ) : (
-          <p className="text-sm text-bone-200/60">Aguardando o anfitrião iniciar a próxima mão…</p>
+
+        {/* extrato desta mão */}
+        {lh && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mb-1 text-center text-[10px] uppercase tracking-widest text-bone-200/40">
+              nesta mão
+            </div>
+            {([myTeam, outro] as const).map((t) => (
+              <div key={t} className="mb-2 rounded-xl border border-white/10 bg-black/20 p-3">
+                <div className="mb-1 flex items-baseline justify-between">
+                  <span className={`text-xs font-bold uppercase tracking-widest ${t === 'nos' ? 'text-brass-300' : 'text-ember-400'}`}>
+                    {nome(t)} {t === myTeam && <span className="text-bone-200/40">(você)</span>}
+                  </span>
+                  <span className={`font-display text-lg ${lh.scores[t].total >= 0 ? 'text-bone-50' : 'text-ember-400'}`}>
+                    {lh.scores[t].total >= 0 ? '+' : ''}
+                    {lh.scores[t].total}
+                  </span>
+                </div>
+                {lh.scores[t].lines.length === 0 ? (
+                  <div className="text-[11px] text-bone-200/40">sem pontos nesta mão</div>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {lh.scores[t].lines.map((l, i) => (
+                      <li key={i} className="flex items-baseline justify-between text-[11px]">
+                        <span className="text-bone-200/70">
+                          {l.label}
+                          {l.detail && <span className="text-bone-200/35"> · {l.detail}</span>}
+                        </span>
+                        <span className={l.value >= 0 ? 'text-emerald-300/90' : 'text-ember-400'}>
+                          {l.value >= 0 ? '+' : ''}
+                          {l.value}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
         )}
+
+        <div className="mt-2 shrink-0">
+          {over ? (
+            <Button variant="gold" className="w-full" onClick={onLeave}>
+              Voltar ao início
+            </Button>
+          ) : canAdvance ? (
+            <Button variant="gold" className="w-full" onClick={onNext}>
+              Próxima mão · alvo {state.target}
+            </Button>
+          ) : (
+            <p className="text-center text-sm text-bone-200/60">
+              Aguardando o anfitrião iniciar a próxima mão…
+            </p>
+          )}
+        </div>
       </div>
     </div>
   )

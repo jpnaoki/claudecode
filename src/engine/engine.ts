@@ -1,5 +1,5 @@
 import { Card, isBlackThree, isRedThree, isWild } from '@/lib/types'
-import { scoreHand, BONUS } from '@/lib/scoring'
+import { scoreHandDetailed, BONUS } from '@/lib/scoring'
 import { validateMeld, isCanastra, sortSequence } from './sequence'
 import {
   GameState, Meld, Seat, Team, SEATS, teamOf, newMeldId, dealHand,
@@ -125,13 +125,13 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
         const pick = pull(s.hands[actor], [top.id, ...meldWith])!
         s.hands[actor] = pick.rest
         s.melds[team].push({ id: newMeldId(), cards: sortSequence(pick.picked) })
-        s.log.push(`${seatName(actor)} pegou o lixo (${taken} cartas) e baixou o topo ${top.rank}${top.suit[0]}.`)
+        s.log.push(`${seatName(s, actor)} pegou o lixo (${taken} cartas) e baixou o topo ${top.rank}${top.suit[0]}.`)
       } else {
         const pick = pull(s.hands[actor], [top.id])!
         s.hands[actor] = pick.rest
         const m = s.melds[team].find((x) => x.id === existing!.id)!
         m.cards = sortSequence([...m.cards, top])
-        s.log.push(`${seatName(actor)} pegou o lixo (${taken} cartas) e encaixou o topo ${top.rank}${top.suit[0]}.`)
+        s.log.push(`${seatName(s, actor)} pegou o lixo (${taken} cartas) e encaixou o topo ${top.rank}${top.suit[0]}.`)
       }
       return ok(afterShrink(s, actor))
     }
@@ -155,7 +155,7 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
         }
       }
       s.log.push(
-        `${seatName(actor)} baixou ${picked.picked.length} três vermelho (+${picked.picked.length * 100}) e comprou ${extra}.`,
+        `${seatName(s, actor)} baixou ${picked.picked.length} três vermelho (+${picked.picked.length * 100}) e comprou ${extra}.`,
       )
       return ok(s)
     }
@@ -171,7 +171,7 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       s.hands[actor] = picked.rest
       const meld: Meld = { id: newMeldId(), cards: sortSequence(picked.picked) }
       s.melds[team].push(meld)
-      s.log.push(`${seatName(actor)} baixou uma sequência de ${picked.picked.length}.`)
+      s.log.push(`${seatName(s, actor)} baixou uma sequência de ${picked.picked.length}.`)
       return ok(afterShrink(s, actor))
     }
 
@@ -189,7 +189,7 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       s.hands[actor] = picked.rest
       const m = s.melds[team].find((x) => x.id === action.meldId)!
       m.cards = sortSequence(combined)
-      s.log.push(`${seatName(actor)} encaixou ${picked.picked.length} carta(s).`)
+      s.log.push(`${seatName(s, actor)} encaixou ${picked.picked.length} carta(s).`)
       return ok(afterShrink(s, actor))
     }
 
@@ -216,12 +216,12 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
           const morto = s.mortos.pop() ?? []
           s.hands[actor] = morto
           s.tookMorto[team] = true
-          s.log.push(`${seatName(actor)} esvaziou a mão e pegou o morto.`)
+          s.log.push(`${seatName(s, actor)} esvaziou a mão e pegou o morto.`)
           return ok(s) // turno continua
         }
         // bate!
-        s.log.push(`${seatName(actor)} bateu! 🎉`)
-        return endHand(s, team)
+        s.log.push(`${seatName(s, actor)} bateu! 🎉`)
+        return endHand(s, team, seatName(s, actor))
       }
 
       // descarte normal: passa a vez
@@ -244,23 +244,24 @@ function afterShrink(s: GameState, actor: Seat): GameState {
     const morto = s.mortos.pop() ?? []
     s.hands[actor] = morto
     s.tookMorto[team] = true
-    s.log.push(`${seatName(actor)} baixou tudo e pegou o morto.`)
+    s.log.push(`${seatName(s, actor)} baixou tudo e pegou o morto.`)
     return s
   }
   if (hasCanastra(s, team)) {
-    s.log.push(`${seatName(actor)} bateu baixando tudo! 🎉`)
-    return endHand(s, team).state
+    s.log.push(`${seatName(s, actor)} bateu baixando tudo! 🎉`)
+    return endHand(s, team, seatName(s, actor)).state
   }
   return s // mão vazia, sem morto p/ pegar e sem canastra — segue (vai precisar de carta; caso de borda)
 }
 
 /** Encerra a mão: pontua as duas duplas, acumula e checa o alvo da partida. */
-function endHand(s: GameState, batedor?: Team): ApplyResult {
+function endHand(s: GameState, batedor?: Team, batedorNome?: string): ApplyResult {
   const teams: Team[] = ['nos', 'eles']
+  const extrato = {} as Record<Team, ReturnType<typeof scoreHandDetailed>>
   for (const t of teams) {
     const handCards = seatsOf(t).flatMap((seat) => s.hands[seat])
     const blackThrees = handCards.filter(isBlackThree).length
-    const delta = scoreHand({
+    const detalhe = scoreHandDetailed({
       melds: s.melds[t].map((m) => ({ cards: m.cards })),
       redThrees: s.redThrees[t].length,
       blackThreesInHand: blackThrees, // -100 por CADA 3 preto que sobrou
@@ -268,9 +269,17 @@ function endHand(s: GameState, batedor?: Team): ApplyResult {
       hasBatted: batedor === t,
       cardsInHand: handCards.filter((c) => !isBlackThree(c)),
     })
-    // penalidade extra por 3 preto na mão é tratada via flag acima (−100); some ao delta
-    s.scores[t] += delta
-    s.log.push(`Dupla ${t === 'nos' ? 'Nós' : 'Eles'}: ${delta >= 0 ? '+' : ''}${delta} (total ${s.scores[t]})`)
+    extrato[t] = detalhe
+    s.scores[t] += detalhe.total
+    s.log.push(
+      `Dupla ${t === 'nos' ? 'Nós' : 'Eles'}: ${detalhe.total >= 0 ? '+' : ''}${detalhe.total} (total ${s.scores[t]})`,
+    )
+  }
+  s.lastHand = {
+    reason: batedor ? 'bateu' : 'monte',
+    batedor,
+    batedorNome,
+    scores: extrato,
   }
   void BONUS
   const reached = teams.filter((t) => s.scores[t] >= s.target)
@@ -284,8 +293,8 @@ function endHand(s: GameState, batedor?: Team): ApplyResult {
   return { state: s }
 }
 
-function seatName(seat: Seat): string {
-  return `Assento ${seat}`
+function seatName(s: GameState, seat: Seat): string {
+  return s.players[seat]?.name ?? `Assento ${seat}`
 }
 
 export { dealHand }

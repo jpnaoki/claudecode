@@ -107,11 +107,41 @@ function meldIsSafe(state: GameState, seat: Seat, used: number): boolean {
   return state.melds[team].some((m) => isCanastra(m.cards)) // já pode bater
 }
 
+/**
+ * Pegar o lixo, quando dá: além de render várias cartas de uma vez, NÃO gasta o
+ * monte — e era isso que fazia a mão morrer cedo demais (o monte secava antes de
+ * alguém conseguir bater). Devolve as cartas da mão que fecham jogo com o topo.
+ */
+function findTakeDiscard(state: GameState, seat: Seat): Action | null {
+  if (state.discardLocked) return null
+  const top = state.discard[state.discard.length - 1]
+  if (!top || top.rank === '3') return null
+  const team = teamOf(seat)
+
+  // (a) o topo encaixa num jogo já baixado da dupla
+  for (const m of state.melds[team]) {
+    if (validateMeld([...m.cards, top]).ok) return { type: 'takeDiscard', meldWith: [] }
+  }
+
+  // (b) o topo fecha jogo novo com 2 cartas da mão
+  const hand = state.hands[seat]
+  for (let i = 0; i < hand.length; i++) {
+    for (let j = i + 1; j < hand.length; j++) {
+      if (validateMeld([top, hand[i], hand[j]]).ok) {
+        return { type: 'takeDiscard', meldWith: [hand[i].id, hand[j].id] }
+      }
+    }
+  }
+  return null
+}
+
 /** Próxima ação do bot no assento `seat`. Sempre progride (na pior das hipóteses, descarta). */
 export function nextBotAction(state: GameState, seat: Seat): Action | null {
   if (state.turn !== seat) return null
 
-  if (state.phase === 'draw' && !state.hasDrawn) return { type: 'draw' }
+  if (state.phase === 'draw' && !state.hasDrawn) {
+    return findTakeDiscard(state, seat) ?? { type: 'draw' }
+  }
 
   if (state.phase === 'play') {
     const hand = state.hands[seat]

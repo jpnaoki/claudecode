@@ -1,5 +1,6 @@
 import { Card } from '@/lib/types'
 import { buildDeck, shuffle } from '@/lib/deck'
+import type { HandScore } from '@/lib/scoring'
 
 export type Seat = 0 | 1 | 2 | 3
 export type Team = 'nos' | 'eles'
@@ -38,6 +39,13 @@ export interface GameState {
   target: number
   dealer: Seat
   winner?: Team
+  /** Extrato da última mão — o fim precisa ser explicado, não só anunciado. */
+  lastHand?: {
+    reason: 'bateu' | 'monte'
+    batedor?: Team
+    batedorNome?: string
+    scores: Record<Team, HandScore>
+  }
   log: string[]
 }
 

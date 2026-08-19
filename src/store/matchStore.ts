@@ -18,6 +18,7 @@ interface MatchStore {
 
   startLocal: () => void
   startBots: () => void
+  resumeOffline: () => boolean // retoma jogo offline salvo; false se não houver
   host: (code: string, players: Record<Seat, SeatPlayer | null>, myId: string) => Promise<void>
   join: (code: string, myId: string) => Promise<void>
   act: (action: Action) => void
@@ -34,6 +35,45 @@ let errorTimer: ReturnType<typeof setTimeout> | null = null
 const stopPolling = () => {
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
+}
+
+/**
+ * Partida offline sobrevive a recarregar/fechar o app. Sem isto, voltar pro /mesa
+ * perdia o jogo contra bots e caía no modo "passa e joga" — a pessoa acabava
+ * jogando as 4 mãos sozinha sem entender por quê.
+ */
+const OFFLINE_KEY = 'tranca.offline'
+
+interface OfflineSave {
+  mode: MatchMode
+  state: GameState
+  humanSeat: Seat | null
+  bots: Seat[]
+}
+
+const saveOffline = (save: OfflineSave) => {
+  try {
+    localStorage.setItem(OFFLINE_KEY, JSON.stringify(save))
+  } catch {
+    /* ignore */
+  }
+}
+const clearOffline = () => {
+  try {
+    localStorage.removeItem(OFFLINE_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+const loadOffline = (): OfflineSave | null => {
+  try {
+    const raw = localStorage.getItem(OFFLINE_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw) as OfflineSave
+    return p?.state && p.mode !== 'online' ? p : null
+  } catch {
+    return null
+  }
 }
 
 export const useMatch = create<MatchStore>((set, get) => {
@@ -94,6 +134,25 @@ export const useMatch = create<MatchStore>((set, get) => {
       }
       const state = dealHand({ handNumber: 1, dealer: 3, scores: { nos: 0, eles: 0 }, target: 3000, players })
       set({ code: null, myId: 'you', state, mySeat: 0, local: true, mode: 'bots', humanSeat: 0, bots: [1, 2, 3], error: null })
+      saveOffline({ mode: 'bots', state, humanSeat: 0, bots: [1, 2, 3] })
+    },
+
+    resumeOffline: () => {
+      const save = loadOffline()
+      if (!save) return false
+      stopPolling()
+      set({
+        code: null,
+        myId: save.mode === 'bots' ? 'you' : 'local',
+        state: save.state,
+        mySeat: save.humanSeat,
+        local: true,
+        mode: save.mode,
+        humanSeat: save.humanSeat,
+        bots: save.bots ?? [],
+        error: null,
+      })
+      return true
     },
 
     host: async (code, players, myId) => {
@@ -124,15 +183,17 @@ export const useMatch = create<MatchStore>((set, get) => {
       }
       const next = res.state
       next.rev = (state.rev ?? 0) + 1
-      const { mode, humanSeat } = get()
+      const { mode, humanSeat, bots } = get()
       const nextMySeat =
         mode === 'online' ? seatOfId(next, get().myId!) : mode === 'bots' ? humanSeat : null
       set({ state: next, mySeat: nextMySeat })
       if (!local && code) void saveGame(code, next)
+      if (local) saveOffline({ mode, state: next, humanSeat, bots }) // sobrevive a recarregar
     },
 
     leave: () => {
       stopPolling()
+      clearOffline()
       set({ code: null, myId: null, state: null, mySeat: null, local: false, mode: 'online', humanSeat: null, bots: [], error: null })
     },
   }

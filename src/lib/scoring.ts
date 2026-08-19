@@ -44,19 +44,67 @@ export interface HandScoreInput {
   cardsInHand: Card[] // cartas que sobraram na mão (contam negativo)
 }
 
+/** Uma linha do extrato de pontos — o jogador precisa ENTENDER de onde veio o placar. */
+export interface ScoreLine {
+  label: string
+  value: number
+  detail?: string
+}
+export interface HandScore {
+  total: number
+  lines: ScoreLine[]
+}
+
+/** Pontuação da dupla ao fim da mão, com o extrato item a item. */
+export function scoreHandDetailed(input: HandScoreInput): HandScore {
+  const lines: ScoreLine[] = []
+
+  const cartasBaixadas = input.melds.reduce((n, m) => n + m.cards.length, 0)
+  if (cartasBaixadas > 0) {
+    lines.push({
+      label: 'Cartas baixadas',
+      value: cartasBaixadas * CARD_POINTS,
+      detail: `${cartasBaixadas} × 10`,
+    })
+  }
+
+  const limpas = input.melds.filter(isCanastraLimpa).length
+  const sujas = input.melds.filter((m) => isCanastra(m) && !isCanastraLimpa(m)).length
+  if (limpas > 0)
+    lines.push({ label: 'Canastra limpa', value: limpas * BONUS.CANASTRA_LIMPA, detail: `${limpas} × 200` })
+  if (sujas > 0)
+    lines.push({ label: 'Canastra suja', value: sujas * BONUS.CANASTRA_SUJA, detail: `${sujas} × 100` })
+
+  if (input.redThrees > 0)
+    lines.push({
+      label: '3 vermelho',
+      value: input.redThrees * BONUS.TRES_VERMELHO,
+      detail: `${input.redThrees} × 100`,
+    })
+
+  if (input.hasBatted) lines.push({ label: 'Bateu!', value: BONUS.BATER })
+
+  if (input.blackThreesInHand > 0)
+    lines.push({
+      label: '3 preto na mão',
+      value: input.blackThreesInHand * BONUS.TRES_PRETO_NA_MAO,
+      detail: `${input.blackThreesInHand} × −100`,
+    })
+
+  if (!input.tookMorto)
+    lines.push({ label: 'Não pegou o morto', value: BONUS.MORTO_NAO_PEGO })
+
+  if (input.cardsInHand.length > 0)
+    lines.push({
+      label: 'Cartas na mão',
+      value: -cardsPoints(input.cardsInHand),
+      detail: `${input.cardsInHand.length} × −10`,
+    })
+
+  return { total: lines.reduce((n, l) => n + l.value, 0), lines }
+}
+
 /** Calcula a pontuação de uma dupla ao fim da mão. */
 export function scoreHand(input: HandScoreInput): number {
-  let total = 0
-  for (const meld of input.melds) {
-    total += cardsPoints(meld.cards)
-    if (isCanastra(meld)) {
-      total += isCanastraLimpa(meld) ? BONUS.CANASTRA_LIMPA : BONUS.CANASTRA_SUJA
-    }
-  }
-  total += input.redThrees * BONUS.TRES_VERMELHO
-  if (input.hasBatted) total += BONUS.BATER
-  total += input.blackThreesInHand * BONUS.TRES_PRETO_NA_MAO // -100 por CADA
-  if (!input.tookMorto) total += BONUS.MORTO_NAO_PEGO
-  total -= cardsPoints(input.cardsInHand)
-  return total
+  return scoreHandDetailed(input).total
 }
