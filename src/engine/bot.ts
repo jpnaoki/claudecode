@@ -1,7 +1,7 @@
 import { Card, isWild, isRedThree, isBlackThree } from '@/lib/types'
 import { GameState, Seat, teamOf } from './state'
-import { validateMeld, isCanastra, LAVADEIRA_RANKS } from './sequence'
-import type { Action } from './engine'
+import { validateMeld, LAVADEIRA_RANKS } from './sequence'
+import { podeBater, type Action } from './engine'
 
 /**
  * Bot simples porém honesto: joga pelas MESMAS ações do motor (nunca trapaceia).
@@ -98,13 +98,16 @@ function chooseDiscard(state: GameState, seat: Seat): string {
   return worst.id
 }
 
-/** Um jogo pode reduzir a mão a <2 cartas? Só se der pra pegar o morto ou bater legalmente. */
+/**
+ * Deixar a mão com menos de 2 cartas só vale se a dupla puder pegar o morto ou
+ * bater de fato — senão o bot fica com 1 carta que não pode descartar e trava.
+ */
 function meldIsSafe(state: GameState, seat: Seat, used: number): boolean {
   const team = teamOf(seat)
   const remaining = state.hands[seat].length - used
-  if (remaining >= 2) return true
-  if (!state.tookMorto[team]) return true // vai pegar o morto e continuar
-  return state.melds[team].some((m) => isCanastra(m.cards)) // já pode bater
+  if (remaining >= 2) return true // sobra carta pro descarte
+  const podePegarMorto = !state.tookMorto[team] && state.mortos.length > 0
+  return podePegarMorto || podeBater(state, team)
 }
 
 /**
@@ -147,9 +150,15 @@ export function nextBotAction(state: GameState, seat: Seat): Action | null {
     const hand = state.hands[seat]
     const team = teamOf(seat)
 
-    // 1) baixa 3 vermelhos (bônus + compra extra)
+    // 1) baixa 3 vermelhos (bônus + compra extra).
+    // Com o monte vazio não há reposição, então isso pode encolher a mão.
     const reds = hand.filter(isRedThree).map((c) => c.id)
-    if (reds.length) return { type: 'layRedThrees', cardIds: reds }
+    if (reds.length) {
+      const reposicao = Math.min(reds.length, state.stock.length)
+      if (meldIsSafe(state, seat, reds.length - reposicao)) {
+        return { type: 'layRedThrees', cardIds: reds }
+      }
+    }
 
     // 2) cresce um jogo já baixado da dupla (rumo à canastra)
     for (const m of state.melds[team]) {

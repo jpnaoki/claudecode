@@ -1,6 +1,6 @@
 import { Card, isBlackThree, isRedThree, isWild } from '@/lib/types'
 import { scoreHandDetailed, BONUS } from '@/lib/scoring'
-import { validateMeld, isCanastra, sortSequence } from './sequence'
+import { validateMeld, isCanastraLimpa, sortSequence } from './sequence'
 import {
   GameState, Meld, Seat, Team, SEATS, teamOf, newMeldId, dealHand,
 } from './state'
@@ -42,7 +42,27 @@ export interface ApplyResult {
 
 const clone = (s: GameState): GameState => structuredClone(s)
 const seatsOf = (t: Team): Seat[] => SEATS.filter((s) => teamOf(s) === t)
-const hasCanastra = (s: GameState, t: Team) => s.melds[t].some((m) => isCanastra(m.cards))
+const hasCanastraLimpa = (s: GameState, t: Team) => s.melds[t].some((m) => isCanastraLimpa(m.cards))
+
+/**
+ * REGRA DA CASA — quando a dupla pode BATER de fato:
+ *  (a) os 2 mortos já acabaram (não há mais morto na mesa); OU
+ *  (b) a dupla já pegou o morto dela E tem uma canastra LIMPA.
+ * Ou seja: bater com morto ainda na mesa exige canastra limpa — não vale tirar
+ * dos outros a chance de pegar o morto de graça.
+ */
+export function podeBater(s: GameState, t: Team): boolean {
+  if (s.mortos.length === 0) return true
+  return s.tookMorto[t] && hasCanastraLimpa(s, t)
+}
+
+/** Motivo pelo qual esvaziar a mão está bloqueado agora (null = pode). */
+function bloqueioParaZerar(s: GameState, actor: Seat): string | null {
+  const team = teamOf(actor)
+  if (!s.tookMorto[team] && s.mortos.length > 0) return null // vai pegar o morto
+  if (podeBater(s, team)) return null
+  return 'Ainda não dá pra bater: com morto na mesa, a dupla precisa de uma canastra LIMPA (ou esperar os 2 mortos acabarem).'
+}
 
 function pull(hand: Card[], ids: string[]): { picked: Card[]; rest: Card[] } | null {
   const picked: Card[] = []
@@ -162,7 +182,8 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       s.log.push(
         `${seatName(s, actor)} baixou ${picked.picked.length} três vermelho (+${picked.picked.length * 100}) e comprou ${extra}.`,
       )
-      return ok(s)
+      // sem monte pra repor, a mão pode ter zerado: trata igual a baixar tudo
+      return ok(afterShrink(s, actor))
     }
 
     case 'meld': {
@@ -171,6 +192,11 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       if (!picked) return fail(state, 'Cartas inválidas.')
       const check = validateMeld(picked.picked)
       if (!check.ok) return fail(state, check.reason ?? 'Sequência inválida.')
+      // não deixa zerar a mão quando ainda não pode bater (senão trava a mesa)
+      if (picked.rest.length === 0) {
+        const bloqueio = bloqueioParaZerar(state, actor)
+        if (bloqueio) return fail(state, bloqueio)
+      }
       const s = clone(state)
       const team = teamOf(actor)
       s.hands[actor] = picked.rest
@@ -190,6 +216,10 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       const combined = [...meld.cards, ...picked.picked]
       const check = validateMeld(combined)
       if (!check.ok) return fail(state, check.reason ?? 'Não encaixa nessa sequência.')
+      if (picked.rest.length === 0) {
+        const bloqueio = bloqueioParaZerar(state, actor)
+        if (bloqueio) return fail(state, bloqueio)
+      }
       const s = clone(state)
       s.hands[actor] = picked.rest
       const m = s.melds[team].find((x) => x.id === action.meldId)!
@@ -209,8 +239,10 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       // (ele pode ter virado monte quando as compras acabaram)
       const podePegarMorto = !state.tookMorto[team] && state.mortos.length > 0
 
-      if (wouldEmpty && !podePegarMorto && !hasCanastra(s0(state), team))
-        return fail(state, 'Você precisa de pelo menos uma canastra para bater.')
+      if (wouldEmpty) {
+        const bloqueio = bloqueioParaZerar(s0(state), actor)
+        if (bloqueio) return fail(state, bloqueio)
+      }
 
       const s = clone(state)
       s.hands[actor].splice(i, 1)
@@ -274,11 +306,11 @@ function afterShrink(s: GameState, actor: Seat): GameState {
     s.log.push(`${seatName(s, actor)} baixou tudo e pegou o morto — continua jogando! 🔥`)
     return s
   }
-  if (hasCanastra(s, team)) {
+  if (podeBater(s, team)) {
     s.log.push(`${seatName(s, actor)} bateu baixando tudo! 🎉`)
     return endHand(s, team, seatName(s, actor)).state
   }
-  return s // mão vazia, sem morto p/ pegar e sem canastra — segue (vai precisar de carta; caso de borda)
+  return s // não deveria acontecer: bloqueioParaZerar barra antes de esvaziar
 }
 
 /** Encerra a mão: pontua as duas duplas, acumula e checa o alvo da partida. */

@@ -204,15 +204,87 @@ describe('o morto também é jogo: vira monte quando as compras acabam', () => {
     expect(r.state.lastHand?.reason).toBe('monte')
   })
 
-  it('sem morto disponível, esvaziar a mão exige canastra (não trava)', () => {
+  it('acabados os 2 mortos, a dupla pode bater', () => {
     const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed: 'z' })
-    s.mortos = [] // já viraram monte
+    s.mortos = [] // já viraram monte / já foram pegos
     s.turn = 1
     s.phase = 'play'
     s.hasDrawn = true
     s.hands[1] = [c('K', 'ouros', 3)]
     const r = apply(s, { type: 'discard', cardId: 'K-ouros-3' }, 1)
-    expect(r.error).toBeTruthy() // sem canastra não pode bater
+    expect(r.error).toBeUndefined()
+    expect(['handOver', 'matchOver']).toContain(r.state.phase)
+  })
+})
+
+describe('quando pode BATER (regra da casa)', () => {
+  /** dupla "eles" (assento 1) com um jogo de 7 cartas: limpa ou suja. */
+  const comCanastra = (limpa: boolean, mortosNaMesa: number) => {
+    const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed: 'bater' })
+    s.mortos = s.mortos.slice(0, mortosNaMesa)
+    s.tookMorto = { nos: false, eles: true } // "eles" já pegou o morto dele
+    const seq = [
+      c('4', 'copas', 1), c('5', 'copas', 1), c('6', 'copas', 1), c('7', 'copas', 1),
+      c('8', 'copas', 1), c('9', 'copas', 1),
+      limpa ? c('10', 'copas', 1) : c('2', 'espadas', 1), // coringa deixa SUJA
+    ]
+    s.melds.eles = [{ id: 'mx', cards: seq }]
+    s.turn = 1
+    s.phase = 'play'
+    s.hasDrawn = true
+    s.hands[1] = [c('K', 'ouros', 9)]
+    return s
+  }
+
+  it('com morto na mesa e canastra SUJA: NÃO pode bater', () => {
+    const r = apply(comCanastra(false, 1), { type: 'discard', cardId: 'K-ouros-9' }, 1)
+    expect(r.error).toBeTruthy()
+    expect(r.error).toMatch(/canastra LIMPA/i)
+  })
+
+  it('com morto na mesa e canastra LIMPA: pode bater', () => {
+    const r = apply(comCanastra(true, 1), { type: 'discard', cardId: 'K-ouros-9' }, 1)
+    expect(r.error).toBeUndefined()
+    expect(['handOver', 'matchOver']).toContain(r.state.phase)
+  })
+
+  it('sem morto na mesa: pode bater mesmo com canastra suja', () => {
+    const r = apply(comCanastra(false, 0), { type: 'discard', cardId: 'K-ouros-9' }, 1)
+    expect(r.error).toBeUndefined()
+    expect(['handOver', 'matchOver']).toContain(r.state.phase)
+  })
+
+  it('baixar tudo também respeita a trava (não deixa zerar a mão)', () => {
+    const s = comCanastra(false, 1) // suja + morto na mesa = não pode bater
+    s.hands[1] = [c('4', 'ouros', 2), c('5', 'ouros', 2), c('6', 'ouros', 2)]
+    const r = apply(s, { type: 'meld', cardIds: ['4-ouros-2', '5-ouros-2', '6-ouros-2'] }, 1)
+    expect(r.error).toBeTruthy()
+    expect(r.state.hands[1].length).toBe(3) // mão intacta
+  })
+})
+
+describe('cada dupla pega no máximo UM morto', () => {
+  it('quem já pegou o morto não pega outro — esvaziar vira batida', () => {
+    const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed: 'um-morto' })
+    s.tookMorto = { nos: false, eles: true } // "eles" já pegou
+    s.mortos = s.mortos.slice(0, 1) // ainda há 1 morto na mesa (é do time "nos")
+    s.melds.eles = [
+      {
+        id: 'ml',
+        cards: [
+          c('4', 'paus', 1), c('5', 'paus', 1), c('6', 'paus', 1), c('7', 'paus', 1),
+          c('8', 'paus', 1), c('9', 'paus', 1), c('10', 'paus', 1),
+        ],
+      },
+    ] // canastra limpa → pode bater
+    s.turn = 1
+    s.phase = 'play'
+    s.hasDrawn = true
+    s.hands[1] = [c('K', 'copas', 4)]
+    const r = apply(s, { type: 'discard', cardId: 'K-copas-4' }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.mortos.length).toBe(1) // NÃO pegou um segundo morto
+    expect(['handOver', 'matchOver']).toContain(r.state.phase) // bateu
   })
 })
 
