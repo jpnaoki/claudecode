@@ -149,7 +149,10 @@ export function apply(state: GameState, action: Action, actor: Seat): ApplyResul
       let extra = 0
       for (const c of picked.picked) {
         s.redThrees[team].push(c)
-        if (refillStock(s)) {
+        // A reposição sai só do que JÁ está no monte — nunca abre um morto.
+        // (o morto é prêmio de quem esvazia a mão; abri-lo aqui ressuscitava
+        //  as compras e o adversário continuava comprando numa mão que ia acabar)
+        if (s.stock.length > 0) {
           const repl = s.stock.pop()!
           s.hands[actor].push(repl)
           s.lastDrawn = repl.id

@@ -143,6 +143,39 @@ describe('pegar o morto: descartando PERDE a vez, baixando tudo CONTINUA', () =>
   })
 })
 
+describe('3 vermelho não ressuscita as compras', () => {
+  // Bug real: comprei a última carta (um 3 vermelho); ao baixá-lo, o motor abriu
+  // um MORTO só pra dar a carta de reposição — e o adversário voltou a comprar.
+  const naUltimaCarta = (mortos: number) => {
+    const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed: 'r3' })
+    s.mortos = s.mortos.slice(0, mortos)
+    s.tookMorto = { nos: true, eles: true }
+    s.stock = []
+    s.hands[1] = [c('3', 'copas', 77), c('K', 'ouros', 1), c('9', 'paus', 1)]
+    s.turn = 1
+    s.phase = 'play'
+    s.hasDrawn = true
+    return s
+  }
+
+  it('baixar 3 vermelho com monte vazio NÃO abre o morto', () => {
+    const s = naUltimaCarta(1)
+    const r = apply(s, { type: 'layRedThrees', cardIds: ['3-copas-77'] }, 1)
+    expect(r.error).toBeUndefined()
+    expect(r.state.redThrees.eles.length).toBe(1) // ganhou os +100
+    expect(r.state.mortos.length).toBe(1) // o morto continua intacto
+    expect(r.state.stock.length).toBe(0) // e o monte segue vazio
+  })
+
+  it('sem monte e sem morto, a mão acaba na compra seguinte', () => {
+    const s = naUltimaCarta(0)
+    const baixou = apply(s, { type: 'layRedThrees', cardIds: ['3-copas-77'] }, 1).state
+    const desc = apply(baixou, { type: 'discard', cardId: 'K-ouros-1' }, 1).state
+    const adv = apply(desc, { type: 'draw' }, desc.turn)
+    expect(['handOver', 'matchOver']).toContain(adv.state.phase)
+  })
+})
+
 describe('o morto também é jogo: vira monte quando as compras acabam', () => {
   const semMonte = (mortos: number) => {
     const s = dealHand({ handNumber: 1, dealer: 0, scores: { nos: 0, eles: 0 }, target: 3000, seed: 'morto' })

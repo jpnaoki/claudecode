@@ -281,7 +281,14 @@ export default function Table() {
             boxShadow: 'inset 0 2px 10px rgba(0,0,0,.45)',
           }}
         >
-          <Pile label={`monte ${state.stock.length}`}>
+          <Pile
+            label={
+              state.stock.length === 0 && state.mortos.length > 0
+                ? 'vazio → vira morto'
+                : `monte ${state.stock.length}`
+            }
+            warn={state.stock.length <= 5 && state.mortos.length === 0}
+          >
             <button
               type="button"
               disabled={!canDrawStock}
@@ -612,11 +619,25 @@ function SeatChip({ state, seat, vertical }: { state: GameState; seat: Seat; ver
   )
 }
 
-function Pile({ label, children }: { label: string; children: React.ReactNode }) {
+function Pile({
+  label,
+  warn,
+  children,
+}: {
+  label: string
+  warn?: boolean
+  children: React.ReactNode
+}) {
   return (
     <div className="flex flex-col items-center gap-1">
       {children}
-      <span className="text-[10px] uppercase tracking-wider text-bone-200/50">{label}</span>
+      <span
+        className={`text-[10px] uppercase tracking-wider ${
+          warn ? 'font-bold text-ember-400' : 'text-bone-200/50'
+        }`}
+      >
+        {label}
+      </span>
     </div>
   )
 }
